@@ -120,11 +120,16 @@ All physics and UI constants now have inline documentation explaining their purp
 - [x] VoiceOver section announcements - announces "Section X of Y" on transitions
 - [ ] Dynamic Type for scroll bar sizing (skipped - minimal impact)
 
-### Programmatic Navigation
-Add method to scroll to a specific section with animation:
+### ~~Programmatic Navigation~~ ✅ DONE
+Change the `currentSection` binding to navigate with animation:
 ```swift
-func scrollTo(section: Int, animated: Bool = true)
+@State private var section = 0
+
+// Navigate to section 2 with animation
+section = 2  // Triggers animated scroll
 ```
+
+Respects `accessibilityReduceMotion` for animation style.
 
 ### Physics Engine Extraction
 Extract momentum/friction/spring code into a reusable `PhysicsAnimator` type for:

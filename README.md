@@ -112,6 +112,24 @@ public struct DetentScrollConfiguration {
 
 - `isScrolled: Bool` — Whether the user has scrolled past the first section
 
+## Programmatic Navigation
+
+Change the `currentSection` binding to navigate with animation:
+
+```swift
+@State private var section = 0
+
+DetentScrollView(
+    sectionHeights: [...],
+    currentSection: $section
+) { ... }
+
+// Navigate to section 2 with animation
+Button("Go to Section 2") {
+    section = 2
+}
+```
+
 ## Gesture Coordination
 
 When embedding interactive content (like zoomable views), use `isScrollDisabled` to prevent scroll gestures from interfering:

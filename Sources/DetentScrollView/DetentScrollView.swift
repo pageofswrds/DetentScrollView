@@ -458,7 +458,34 @@ public struct DetentScrollView<Content: View>: View {
                     .onChange(of: currentSectionInternal) { _, newSection in
                         announceSection(newSection)
                     }
+                    .onChange(of: currentSectionBinding) { oldSection, newSection in
+                        // Handle programmatic navigation via binding
+                        if usesExternalBinding && newSection != currentSectionInternal {
+                            scrollToSection(newSection, from: oldSection)
+                        }
+                    }
             }
+        }
+    }
+
+    // MARK: - Programmatic Navigation
+
+    /// Scroll to a specific section with animation.
+    /// Called when the external binding changes.
+    private func scrollToSection(_ section: Int, from oldSection: Int) {
+        let clampedSection = max(0, min(section, sectionHeights.count - 1))
+        let animation: Animation? = reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.8)
+
+        withAnimation(animation) {
+            currentSectionInternal = clampedSection
+            // When navigating forward, start at top of new section
+            // When navigating backward, start at bottom of new section (to show transition)
+            if clampedSection > oldSection {
+                internalOffset = 0
+            } else {
+                internalOffset = 0  // Start at top for backward navigation too
+            }
+            rawDragOffset = 0
         }
     }
 
