@@ -55,28 +55,16 @@ Eliminates redundant calculations during 60-120fps animation updates.
 
 ## Priority 3: Test Coverage
 
-Current tests only verify configuration defaults and view instantiation.
+### ~~Missing Tests~~ ✅ DONE
+Physics functions extracted to `DetentScrollPhysics` enum and comprehensively tested.
 
-### Missing Tests
-- [ ] Rubber-band formula accuracy
-- [ ] Momentum physics (friction decay rate, boundary bounce behavior)
-- [ ] Section transition logic (threshold crossing, direction)
-- [ ] Edge cases:
-  - Single section
-  - Zero height section
-  - Mismatched `sectionHeights` / `sectionSnapInsets` array lengths
-- [ ] `visualOffset` calculation correctness
-- [ ] `isScrolled` state transitions
-
-### Suggested Approach
-Extract physics logic into pure functions for unit testing:
-```swift
-// Testable pure function
-func rubberBand(offset: CGFloat, limit: CGFloat, coefficient: CGFloat) -> CGFloat
-
-// Testable momentum step
-func applyMomentum(velocity: CGFloat, friction: CGFloat, frameTime: CGFloat) -> CGFloat
-```
+**31 tests covering:**
+- [x] Rubber-band formula (zero, positive, negative, symmetry, asymptotic limit, coefficient effects, monotonicity)
+- [x] Spring force (at rest, positive/negative displacement, damping, stiffness scaling)
+- [x] Friction (basic decay, zero velocity, negative velocity, decay over time)
+- [x] Integration (positive/negative velocity, zero cases)
+- [x] Combined simulations (momentum decay, bounce settling)
+- [x] Edge cases (single section, mismatched arrays, empty snap insets)
 
 ---
 
@@ -156,7 +144,7 @@ protocol DetentScrollContent {
 |----------|-------|--------|
 | Bug Fixes | 2 | Done |
 | Performance | 1 | Done |
-| Test Coverage | 6 | Pending |
+| Test Coverage | 6 | Done |
 | Robustness | 2 | 1 Done, 1 Pending |
 | Code Quality | 1 | Done |
 | Future Enhancements | 4 | Planned |
