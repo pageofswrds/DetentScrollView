@@ -10,12 +10,23 @@ final class DetentScrollViewTests: XCTestCase {
         let config = DetentScrollConfiguration.default
         XCTAssertEqual(config.threshold, 120)
         XCTAssertEqual(config.resistanceCoefficient, 0.55)
+        XCTAssertEqual(config.minimumDragDistance, 10)
     }
 
     func testCustomConfiguration() {
         let config = DetentScrollConfiguration(threshold: 200, resistanceCoefficient: 0.8)
         XCTAssertEqual(config.threshold, 200)
         XCTAssertEqual(config.resistanceCoefficient, 0.8)
+        XCTAssertEqual(config.minimumDragDistance, 10)  // Uses default
+    }
+
+    func testCustomMinimumDragDistance() {
+        let config = DetentScrollConfiguration(
+            threshold: 120,
+            resistanceCoefficient: 0.55,
+            minimumDragDistance: 25
+        )
+        XCTAssertEqual(config.minimumDragDistance, 25)
     }
 
     // MARK: - View Instantiation Tests

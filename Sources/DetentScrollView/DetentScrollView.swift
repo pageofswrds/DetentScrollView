@@ -72,10 +72,19 @@ public struct DetentScrollConfiguration {
     /// Rubber-band resistance coefficient - higher values produce more resistance (default: 0.55)
     public var resistanceCoefficient: CGFloat
 
+    /// Minimum drag distance before scroll gesture activates (default: 10pt).
+    /// Increase this value if child views need to capture vertical drags.
+    public var minimumDragDistance: CGFloat
+
     /// Creates a configuration with the specified parameters.
-    public init(threshold: CGFloat = 120, resistanceCoefficient: CGFloat = 0.55) {
+    public init(
+        threshold: CGFloat = 120,
+        resistanceCoefficient: CGFloat = 0.55,
+        minimumDragDistance: CGFloat = 10
+    ) {
         self.threshold = threshold
         self.resistanceCoefficient = resistanceCoefficient
+        self.minimumDragDistance = minimumDragDistance
     }
 
     /// Default configuration with standard threshold and resistance values.
@@ -399,7 +408,7 @@ public struct DetentScrollView<Content: View>: View {
                 content
                     .offset(y: visualOffset)
                     .gesture(
-                        DragGesture(minimumDistance: 10)
+                        DragGesture(minimumDistance: configuration.minimumDragDistance)
                             .onChanged { value in
                                 // Ignore if scrolling is disabled (e.g., content is zoomed)
                                 guard !isScrollDisabled else { return }

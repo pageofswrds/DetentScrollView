@@ -86,15 +86,19 @@ if insets.count < sectionHeights.count {
 - Too few insets: padded with zeros
 - Too many insets: truncated to match
 
-### Gesture Threshold Conflicts
-**File:** `DetentScrollView.swift:329`
+### ~~Gesture Threshold Conflicts~~ ✅ DONE
+**File:** `DetentScrollView.swift:411`
 
-Fixed 10pt minimum distance may conflict with child gestures:
+Minimum drag distance is now configurable via `DetentScrollConfiguration`:
 ```swift
-DragGesture(minimumDistance: 10)
+DetentScrollConfiguration(
+    threshold: 120,
+    resistanceCoefficient: 0.55,
+    minimumDragDistance: 25  // Increase for child gesture priority
+)
 ```
 
-**Consider:** Making configurable or using `simultaneousGesture` with coordination.
+Default remains 10pt for standard scroll behavior.
 
 ---
 
@@ -145,6 +149,6 @@ protocol DetentScrollContent {
 | Bug Fixes | 2 | Done |
 | Performance | 1 | Done |
 | Test Coverage | 6 | Done |
-| Robustness | 2 | 1 Done, 1 Pending |
+| Robustness | 2 | Done |
 | Code Quality | 1 | Done |
 | Future Enhancements | 4 | Planned |

@@ -94,12 +94,19 @@ public init(
 
 ```swift
 public struct DetentScrollConfiguration {
-    public var threshold: CGFloat        // Default: 120
-    public var resistanceCoefficient: CGFloat  // Default: 0.55
+    public var threshold: CGFloat            // Default: 120
+    public var resistanceCoefficient: CGFloat // Default: 0.55
+    public var minimumDragDistance: CGFloat   // Default: 10
 
     public static let `default` = DetentScrollConfiguration()
 }
 ```
+
+**Parameters:**
+
+- `threshold`: Drag distance required to trigger a section transition
+- `resistanceCoefficient`: Rubber-band strength (higher = less resistance)
+- `minimumDragDistance`: Minimum drag before scroll activates (increase if child views need vertical gestures)
 
 ### Properties
 
