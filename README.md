@@ -27,7 +27,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/your-username/DetentScrollView.git", from: "1.0.0")
+    .package(url: "https://github.com/pageofswrds/DetentScrollView.git", from: "1.0.0")
 ]
 ```
 
