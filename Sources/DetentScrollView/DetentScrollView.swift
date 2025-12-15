@@ -90,6 +90,9 @@ public struct DetentScrollView<Content: View>: View {
     /// Whether external binding is being used (vs internal state only).
     private let usesExternalBinding: Bool
 
+    /// Cached Y offset for the start of each section (computed once at init).
+    private let cachedSectionOffsets: [CGFloat]
+
     // MARK: - Private State
 
     @State private var currentSectionInternal: Int = 0
@@ -154,6 +157,15 @@ public struct DetentScrollView<Content: View>: View {
         self.isScrollDisabled = isScrollDisabled
         self.content = content()
 
+        // Pre-compute section offsets once (avoids recalculation during animation)
+        var offsets: [CGFloat] = [0]
+        var cumulative: CGFloat = 0
+        for height in sectionHeights.dropLast() {
+            cumulative += height
+            offsets.append(cumulative)
+        }
+        self.cachedSectionOffsets = offsets
+
         if let binding = currentSection {
             self._currentSectionBinding = binding
             self.usesExternalBinding = true
@@ -180,13 +192,7 @@ public struct DetentScrollView<Content: View>: View {
 
     /// Y offset for the start of each section.
     private var sectionOffsets: [CGFloat] {
-        var offsets: [CGFloat] = [0]
-        var cumulative: CGFloat = 0
-        for height in sectionHeights.dropLast() {
-            cumulative += height
-            offsets.append(cumulative)
-        }
-        return offsets
+        cachedSectionOffsets
     }
 
     /// Current section's starting offset.

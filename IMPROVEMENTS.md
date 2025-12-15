@@ -32,23 +32,24 @@ Added `onDisappear` cleanup to cancel any pending scroll bar hide task:
 
 ## Priority 2: Performance
 
-### Cache Section Offsets
-**File:** `DetentScrollView.swift:180-188`
+### ~~Cache Section Offsets~~ ✅ DONE
+**File:** `DetentScrollView.swift:93-94, 160-167`
 
-During momentum animation, `TimelineView` triggers ~60 updates/sec. `sectionOffsets` is recalculated each frame despite `sectionHeights` being constant:
+Section offsets are now computed once at initialization and cached:
 ```swift
-private var sectionOffsets: [CGFloat] {
-    var offsets: [CGFloat] = [0]
-    var cumulative: CGFloat = 0
-    for height in sectionHeights.dropLast() {
-        cumulative += height
-        offsets.append(cumulative)
-    }
-    return offsets
+private let cachedSectionOffsets: [CGFloat]  // Stored property
+
+// Computed in init:
+var offsets: [CGFloat] = [0]
+var cumulative: CGFloat = 0
+for height in sectionHeights.dropLast() {
+    cumulative += height
+    offsets.append(cumulative)
 }
+self.cachedSectionOffsets = offsets
 ```
 
-**Fix:** Cache on initialization or when `sectionHeights` changes.
+Eliminates redundant calculations during 60-120fps animation updates.
 
 ---
 
@@ -153,7 +154,7 @@ protocol DetentScrollContent {
 | Category | Items | Status |
 |----------|-------|--------|
 | Bug Fixes | 2 | Done |
-| Performance | 1 | Pending |
+| Performance | 1 | Done |
 | Test Coverage | 6 | Pending |
 | Robustness | 2 | Pending |
 | Code Quality | 1 | Pending |
