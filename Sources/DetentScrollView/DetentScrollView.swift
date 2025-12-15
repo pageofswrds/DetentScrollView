@@ -7,60 +7,7 @@
 
 import SwiftUI
 import QuartzCore
-
-// MARK: - Physics
-
-/// Pure physics functions for DetentScrollView, exposed for testing.
-public enum DetentScrollPhysics {
-    /// Apply rubber-band resistance to a drag offset.
-    /// - Parameters:
-    ///   - offset: The raw drag offset (can be positive or negative)
-    ///   - limit: The maximum visual offset (asymptotic limit)
-    ///   - coefficient: Resistance strength (higher = more resistance)
-    /// - Returns: The visually dampened offset
-    public static func rubberBand(offset: CGFloat, limit: CGFloat, coefficient: CGFloat) -> CGFloat {
-        let absOffset = abs(offset)
-        let sign: CGFloat = offset >= 0 ? 1 : -1
-        let resisted = (1 - (1 / (absOffset * coefficient / limit + 1))) * limit
-        return sign * resisted
-    }
-
-    /// Calculate spring force for boundary bounce.
-    /// Uses over-damped spring formula: F = -kx - cv
-    /// - Parameters:
-    ///   - displacement: Distance from boundary (positive = past boundary)
-    ///   - velocity: Current velocity
-    ///   - stiffness: Spring constant (k)
-    ///   - damping: Damping coefficient (c)
-    /// - Returns: The spring force to apply
-    public static func springForce(
-        displacement: CGFloat,
-        velocity: CGFloat,
-        stiffness: CGFloat,
-        damping: CGFloat
-    ) -> CGFloat {
-        return -stiffness * displacement - damping * velocity
-    }
-
-    /// Apply friction to velocity for one frame.
-    /// - Parameters:
-    ///   - velocity: Current velocity
-    ///   - friction: Friction coefficient (0-1, e.g., 0.95)
-    /// - Returns: New velocity after friction applied
-    public static func applyFriction(velocity: CGFloat, friction: CGFloat) -> CGFloat {
-        return velocity * friction
-    }
-
-    /// Calculate new position from velocity over a time step.
-    /// - Parameters:
-    ///   - position: Current position
-    ///   - velocity: Current velocity
-    ///   - deltaTime: Time step in seconds
-    /// - Returns: New position
-    public static func integrate(position: CGFloat, velocity: CGFloat, deltaTime: CGFloat) -> CGFloat {
-        return position + velocity * deltaTime
-    }
-}
+import Mercurial
 
 // MARK: - Configuration
 
@@ -317,7 +264,7 @@ public struct DetentScrollView<Content: View>: View {
 
     /// Apply rubber-band resistance to drag offset.
     private func rubberBand(offset: CGFloat, limit: CGFloat) -> CGFloat {
-        DetentScrollPhysics.rubberBand(
+        Physics.rubberBand(
             offset: offset,
             limit: limit,
             coefficient: configuration.resistanceCoefficient
@@ -687,14 +634,14 @@ public struct DetentScrollView<Content: View>: View {
             let boundary: CGFloat = isPastTop ? 0 : maxInternalScroll
             let displacement = internalOffset - boundary
 
-            let force = DetentScrollPhysics.springForce(
+            let force = Physics.springForce(
                 displacement: displacement,
                 velocity: momentumVelocity,
                 stiffness: bounceStiffness,
                 damping: bounceDamping
             )
             momentumVelocity += force * frameTime
-            internalOffset = DetentScrollPhysics.integrate(
+            internalOffset = Physics.integrate(
                 position: internalOffset,
                 velocity: momentumVelocity,
                 deltaTime: frameTime
@@ -712,12 +659,12 @@ public struct DetentScrollView<Content: View>: View {
             }
         } else {
             // Normal friction-based momentum
-            internalOffset = DetentScrollPhysics.integrate(
+            internalOffset = Physics.integrate(
                 position: internalOffset,
                 velocity: momentumVelocity,
                 deltaTime: frameTime
             )
-            momentumVelocity = DetentScrollPhysics.applyFriction(
+            momentumVelocity = Physics.applyFriction(
                 velocity: momentumVelocity,
                 friction: friction
             )

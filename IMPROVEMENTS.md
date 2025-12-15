@@ -56,7 +56,7 @@ Eliminates redundant calculations during 60-120fps animation updates.
 ## Priority 3: Test Coverage
 
 ### ~~Missing Tests~~ ✅ DONE
-Physics functions extracted to `DetentScrollPhysics` enum and comprehensively tested.
+Physics functions extracted to the [Mercurial](../Mercurial) package and comprehensively tested.
 
 **31 tests covering:**
 - [x] Rubber-band formula (zero, positive, negative, symmetry, asymptotic limit, coefficient effects, monotonicity)
@@ -131,11 +131,12 @@ section = 2  // Triggers animated scroll
 
 Respects `accessibilityReduceMotion` for animation style.
 
-### Physics Engine Extraction
-Extract momentum/friction/spring code into a reusable `PhysicsAnimator` type for:
-- Better testability
-- Reuse in other components
-- Easier tuning
+### ~~Physics Engine Extraction~~ ✅ DONE
+Physics extracted to the [Mercurial](../Mercurial) package:
+- Pure physics functions (`Physics.rubberBand`, `Physics.springForce`, etc.)
+- 1D and 2D variants for scroll and pan gestures
+- `MomentumAnimator` classes for common use cases
+- Comprehensive test coverage (91 tests)
 
 ### Protocol for Content
 Consider a protocol for content to provide intrinsic heights:
@@ -156,4 +157,4 @@ protocol DetentScrollContent {
 | Test Coverage | 6 | Done |
 | Robustness | 2 | Done |
 | Code Quality | 1 | Done |
-| Future Enhancements | 4 | Planned |
+| Future Enhancements | 4 | 3 Done, 1 Planned |
