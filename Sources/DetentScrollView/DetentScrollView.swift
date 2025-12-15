@@ -170,6 +170,11 @@ public struct DetentScrollView<Content: View>: View {
     @State private var scrollBarHideTask: Task<Void, Never>?
     @State private var lastMomentumUpdateTime: CFTimeInterval = 0
 
+    // MARK: - Environment
+
+    /// Respects user's "Reduce Motion" accessibility setting.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     // MARK: - Computed Properties
 
     /// Current section index (from binding or internal state).
@@ -450,8 +455,20 @@ public struct DetentScrollView<Content: View>: View {
                                 .padding(.trailing, 4)
                         }
                     }
+                    .onChange(of: currentSectionInternal) { _, newSection in
+                        announceSection(newSection)
+                    }
             }
         }
+    }
+
+    // MARK: - Accessibility
+
+    /// Announce section change to VoiceOver users.
+    private func announceSection(_ section: Int) {
+        let totalSections = sectionHeights.count
+        let announcement = "Section \(section + 1) of \(totalSections)"
+        AccessibilityNotification.Announcement(announcement).post()
     }
 
     // MARK: - Gesture Handling
@@ -547,9 +564,13 @@ public struct DetentScrollView<Content: View>: View {
         let shouldAdvance = -rawDragOffset > threshold && currentSection < sectionHeights.count - 1
         let shouldRetreat = rawDragOffset > threshold && currentSection > 0
 
+        // Use simple animation when user prefers reduced motion
+        let transitionAnimation: Animation? = reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.8)
+        let snapBackAnimation: Animation? = reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.9)
+
         if shouldAdvance {
             let newSection = currentSection + 1
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            withAnimation(transitionAnimation) {
                 setCurrentSection(newSection)
                 internalOffset = 0
                 rawDragOffset = 0
@@ -557,17 +578,20 @@ public struct DetentScrollView<Content: View>: View {
         } else if shouldRetreat {
             let newSection = currentSection - 1
             let previousSectionMaxScroll = maxInternalScroll(for: newSection)
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            withAnimation(transitionAnimation) {
                 setCurrentSection(newSection)
                 internalOffset = previousSectionMaxScroll
                 rawDragOffset = 0
             }
         } else {
             // No section transition - apply momentum to internal scroll
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+            withAnimation(snapBackAnimation) {
                 rawDragOffset = 0
             }
-            applyMomentum(velocity: velocity)
+            // Skip momentum physics when user prefers reduced motion
+            if !reduceMotion {
+                applyMomentum(velocity: velocity)
+            }
         }
 
         // Reset drag tracking

@@ -115,10 +115,10 @@ All physics and UI constants now have inline documentation explaining their purp
 
 ## Future Enhancements
 
-### Accessibility
-- Respect `accessibilityReduceMotion` to disable momentum/bounce
-- Add VoiceOver support for section announcements
-- Support Dynamic Type for scroll bar sizing
+### ~~Accessibility~~ ✅ DONE
+- [x] Respect `accessibilityReduceMotion` - skips momentum, uses simple easeOut animations
+- [x] VoiceOver section announcements - announces "Section X of Y" on transitions
+- [ ] Dynamic Type for scroll bar sizing (skipped - minimal impact)
 
 ### Programmatic Navigation
 Add method to scroll to a specific section with animation:
