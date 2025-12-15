@@ -112,17 +112,12 @@ DragGesture(minimumDistance: 10)
 
 ## Priority 5: Code Quality
 
-### Document Magic Numbers
-Several unexplained constants should be documented or moved to configuration:
+### ~~Document Magic Numbers~~ ✅ DONE
+All physics and UI constants now have inline documentation explaining their purpose:
 
-| Value | Location | Purpose |
-|-------|----------|---------|
-| `40` | line 265 | Minimum scroll bar height |
-| `300` | line 279 | Overscroll shrink divisor |
-| `50` | line 516 | Minimum velocity for momentum |
-| `0.95` | line 530 | Friction coefficient |
-| `200` | line 531 | Bounce spring stiffness |
-| `30` | line 532 | Bounce spring damping |
+- Scroll bar: `40pt` minimum height, `300pt` shrink divisor, `0.3` minimum shrink factor, `20pt` absolute minimum
+- Momentum: `50 pt/s` minimum velocity threshold
+- Physics: `0.95` friction (decays to ~5% over 1 second), `200` spring stiffness, `30` damping (over-damped)
 
 ---
 
@@ -163,5 +158,5 @@ protocol DetentScrollContent {
 | Performance | 1 | Done |
 | Test Coverage | 6 | Pending |
 | Robustness | 2 | 1 Done, 1 Pending |
-| Code Quality | 1 | Pending |
+| Code Quality | 1 | Done |
 | Future Enhancements | 4 | Planned |

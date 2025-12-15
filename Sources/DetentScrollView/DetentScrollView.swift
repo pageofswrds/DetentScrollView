@@ -277,6 +277,7 @@ public struct DetentScrollView<Content: View>: View {
     private var scrollBarHeight: CGFloat {
         guard totalScrollableDistance > 0 else { return 0 }
         let contentRatio = viewportHeight / totalContentHeight
+        // 40pt minimum ensures scroll bar is always visible/tappable
         let baseHeight = max(40, viewportHeight * contentRatio)
 
         // Shrink when overscrolling (bounce or detent resistance)
@@ -291,6 +292,9 @@ public struct DetentScrollView<Content: View>: View {
             overscrollAmount = 0
         }
 
+        // 300pt divisor controls how quickly scroll bar shrinks during overscroll
+        // 0.3 minimum prevents scroll bar from disappearing completely
+        // 20pt absolute minimum for visibility
         let shrinkFactor = max(0.3, 1 - (overscrollAmount / 300))
         return max(20, baseHeight * shrinkFactor)
     }
@@ -532,6 +536,7 @@ public struct DetentScrollView<Content: View>: View {
     /// Start momentum animation with the given velocity.
     /// - Parameter velocity: Gesture velocity in points per second.
     private func applyMomentum(velocity: CGFloat) {
+        // 50 pt/s minimum prevents micro-momentum from tiny flicks
         let minVelocity: CGFloat = 50
         if abs(velocity) > minVelocity {
             // Flip sign: positive velocity = content moves up = offset increases
@@ -552,6 +557,10 @@ public struct DetentScrollView<Content: View>: View {
         let frameTime = CGFloat(min(rawDelta, 1.0 / 30.0))  // Clamp to prevent jumps on frame drops
         lastMomentumUpdateTime = currentTime
 
+        // Physics constants tuned for natural iOS feel:
+        // - friction: 0.95 = velocity decays to ~5% after 60 frames (~1 second)
+        // - bounceStiffness: 200 = firm spring, quick return to boundary
+        // - bounceDamping: 30 = over-damped (no oscillation), smooth settle
         let friction: CGFloat = 0.95
         let bounceStiffness: CGFloat = 200
         let bounceDamping: CGFloat = 30
