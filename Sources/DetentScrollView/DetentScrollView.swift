@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import QuartzCore
 
 // MARK: - Configuration
 
@@ -101,6 +102,7 @@ public struct DetentScrollView<Content: View>: View {
     @State private var isMomentumActive: Bool = false
     @State private var isScrollBarVisible: Bool = false
     @State private var scrollBarHideTask: Task<Void, Never>?
+    @State private var lastMomentumUpdateTime: CFTimeInterval = 0
 
     // MARK: - Computed Properties
 
@@ -346,6 +348,10 @@ public struct DetentScrollView<Content: View>: View {
                     .onAppear {
                         viewportHeight = geometry.size.height
                     }
+                    .onDisappear {
+                        scrollBarHideTask?.cancel()
+                        scrollBarHideTask = nil
+                    }
                     .onChange(of: geometry.size.height) { _, newHeight in
                         viewportHeight = newHeight
                     }
@@ -517,6 +523,7 @@ public struct DetentScrollView<Content: View>: View {
         if abs(velocity) > minVelocity {
             // Flip sign: positive velocity = content moves up = offset increases
             momentumVelocity = -velocity
+            lastMomentumUpdateTime = CACurrentMediaTime()
             isMomentumActive = true
         }
     }
@@ -526,7 +533,12 @@ public struct DetentScrollView<Content: View>: View {
     /// Uses friction-based deceleration for normal scrolling and
     /// over-damped spring physics for boundary bounce.
     private func updateMomentum() {
-        let frameTime: CGFloat = 1.0 / 60.0
+        // Calculate actual frame time for correct physics on all refresh rates
+        let currentTime = CACurrentMediaTime()
+        let rawDelta = currentTime - lastMomentumUpdateTime
+        let frameTime = CGFloat(min(rawDelta, 1.0 / 30.0))  // Clamp to prevent jumps on frame drops
+        lastMomentumUpdateTime = currentTime
+
         let friction: CGFloat = 0.95
         let bounceStiffness: CGFloat = 200
         let bounceDamping: CGFloat = 30
