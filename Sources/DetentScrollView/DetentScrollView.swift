@@ -152,7 +152,14 @@ public struct DetentScrollView<Content: View>: View {
         @ViewBuilder content: () -> Content
     ) {
         self.sectionHeights = sectionHeights
-        self.sectionSnapInsets = sectionSnapInsets ?? Array(repeating: 0, count: sectionHeights.count)
+
+        // Ensure snap insets array matches section count (pad with zeros if shorter)
+        let insets = sectionSnapInsets ?? []
+        if insets.count < sectionHeights.count {
+            self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionHeights.count - insets.count)
+        } else {
+            self.sectionSnapInsets = Array(insets.prefix(sectionHeights.count))
+        }
         self.configuration = configuration
         self.isScrollDisabled = isScrollDisabled
         self.content = content()

@@ -82,15 +82,21 @@ func applyMomentum(velocity: CGFloat, friction: CGFloat, frameTime: CGFloat) -> 
 
 ## Priority 4: Robustness
 
-### Array Bounds Validation
-**File:** `DetentScrollView.swift:168-199`
+### ~~Array Bounds Validation~~ ✅ DONE
+**File:** `DetentScrollView.swift:156-162`
 
-Guard statements silently return 0 on out-of-bounds access. If `sectionSnapInsets.count != sectionHeights.count`, behavior is undefined.
+Snap insets array is now automatically normalized to match section count:
+```swift
+let insets = sectionSnapInsets ?? []
+if insets.count < sectionHeights.count {
+    self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionHeights.count - insets.count)
+} else {
+    self.sectionSnapInsets = Array(insets.prefix(sectionHeights.count))
+}
+```
 
-**Options:**
-1. Assert equality in initializer (fail fast)
-2. Document the contract explicitly
-3. Auto-pad shorter array with zeros
+- Too few insets: padded with zeros
+- Too many insets: truncated to match
 
 ### Gesture Threshold Conflicts
 **File:** `DetentScrollView.swift:329`
@@ -156,6 +162,6 @@ protocol DetentScrollContent {
 | Bug Fixes | 2 | Done |
 | Performance | 1 | Done |
 | Test Coverage | 6 | Pending |
-| Robustness | 2 | Pending |
+| Robustness | 2 | 1 Done, 1 Pending |
 | Code Quality | 1 | Pending |
 | Future Enhancements | 4 | Planned |
