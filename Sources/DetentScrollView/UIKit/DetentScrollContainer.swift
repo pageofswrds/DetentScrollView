@@ -138,7 +138,8 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         controller.setContent(content)
 
         // Handle programmatic section changes from binding
-        if usesExternalBinding && controller.currentSection != currentSection {
+        // Don't trigger during animations to avoid feedback loops with rapid swiping
+        if usesExternalBinding && controller.currentSection != currentSection && !controller.isAnimating {
             controller.scrollToSection(currentSection, animated: true)
         }
     }

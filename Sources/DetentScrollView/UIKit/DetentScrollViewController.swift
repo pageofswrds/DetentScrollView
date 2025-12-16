@@ -64,9 +64,12 @@ public class DetentScrollViewController: UIViewController {
     /// Current momentum velocity.
     private var momentumVelocity: CGFloat = 0
 
-    /// Whether momentum animation is active.
+    /// Whether a section transition animation is in progress.
+    private var isSectionAnimating: Bool = false
+
+    /// Whether any animation is active (momentum or section transition).
     public var isAnimating: Bool {
-        displayLink != nil
+        displayLink != nil || isSectionAnimating
     }
 
     /// Last momentum update timestamp.
@@ -344,8 +347,11 @@ extension DetentScrollViewController {
     }
 
     private func handleDragBegan() {
-        // Cancel any in-flight momentum
+        print("[DetentScroll] dragBegan - currentSection: \(currentSection), internalOffset: \(internalOffset), rawDragOffset: \(rawDragOffset)")
+
+        // Cancel any in-flight animations
         stopMomentum()
+        isSectionAnimating = false
 
         isDragging = true
         lastPanTranslation = 0
@@ -376,6 +382,8 @@ extension DetentScrollViewController {
         // Check raw drag offset against threshold
         let shouldAdvance = -rawDragOffset > threshold && currentSection < sectionHeights.count - 1
         let shouldRetreat = rawDragOffset > threshold && currentSection > 0
+
+        print("[DetentScroll] dragEnded - rawDragOffset: \(rawDragOffset), threshold: \(threshold), shouldAdvance: \(shouldAdvance), shouldRetreat: \(shouldRetreat), velocity: \(velocity)")
 
         if shouldAdvance {
             animateToSection(currentSection + 1, fromBottom: false)
@@ -473,6 +481,10 @@ extension DetentScrollViewController {
     private func animateToSection(_ section: Int, fromBottom: Bool) {
         let newSection = max(0, min(section, sectionHeights.count - 1))
 
+        print("[DetentScroll] animateToSection START - from: \(currentSection) to: \(newSection), fromBottom: \(fromBottom)")
+
+        isSectionAnimating = true
+
         UIView.animate(
             withDuration: 0.4,
             delay: 0,
@@ -489,13 +501,22 @@ extension DetentScrollViewController {
             self.rawDragOffset = 0
             self.updateContentOffset()
             self.updateScrollBarFrame()
-        } completion: { _ in
-            self.onSectionChanged?(newSection)
+        } completion: { finished in
+            print("[DetentScroll] animateToSection END - targetSection: \(newSection), finished: \(finished), actualSection: \(self.currentSection)")
+
+            // Only clear animation flag and notify if we're actually at the target section
+            // (animation wasn't overridden by another animation)
+            if self.currentSection == newSection {
+                self.isSectionAnimating = false
+                self.onSectionChanged?(newSection)
+            }
             self.hideScrollBarAfterDelay()
         }
     }
 
     private func animateSnapBack() {
+        print("[DetentScroll] animateSnapBack START - rawDragOffset: \(rawDragOffset)")
+
         UIView.animate(
             withDuration: 0.3,
             delay: 0,
@@ -505,6 +526,8 @@ extension DetentScrollViewController {
         ) {
             self.rawDragOffset = 0
             self.updateContentOffset()
+        } completion: { finished in
+            print("[DetentScroll] animateSnapBack END - finished: \(finished)")
         }
     }
 
@@ -530,7 +553,12 @@ extension DetentScrollViewController {
 
     private func applyMomentum(velocity: CGFloat) {
         let minVelocity: CGFloat = 50
-        guard abs(velocity) > minVelocity else { return }
+        guard abs(velocity) > minVelocity else {
+            print("[DetentScroll] applyMomentum SKIPPED - velocity \(velocity) below threshold \(minVelocity)")
+            return
+        }
+
+        print("[DetentScroll] applyMomentum START - velocity: \(velocity)")
 
         // Flip sign: positive velocity = content moves up = offset increases
         momentumVelocity = -velocity
@@ -600,6 +628,9 @@ extension DetentScrollViewController {
     }
 
     private func stopMomentum() {
+        if displayLink != nil {
+            print("[DetentScroll] stopMomentum - was active, internalOffset: \(internalOffset)")
+        }
         displayLink?.invalidate()
         displayLink = nil
         momentumVelocity = 0
