@@ -411,15 +411,14 @@ extension DetentScrollViewController {
         isDragging = false
         lastPanTranslation = 0
 
-        // Hide scroll bar after delay if no momentum running
-        // (if momentum IS running, stopMomentum will call hideScrollBarAfterDelay when it stops)
-        if !isAnimating {
-            hideScrollBarAfterDelay()
-        }
-
-        // Extra safeguard: always schedule a hide when drag ends
-        // This catches edge cases at scroll boundaries where other code paths might miss it
-        // The hide task self-deduplicates (calling it multiple times just resets the timer)
+        // Always schedule scroll bar hide when drag ends.
+        //
+        // Why unconditional: There are multiple code paths that should hide the scroll bar
+        // (stopMomentum, animateToSection completion, etc.), but edge cases at scroll
+        // boundaries - particularly at the bottom of the last section - can cause the
+        // hide to not trigger. Rather than chase down every edge case, we always schedule
+        // a hide here as a safeguard. The hide task self-deduplicates (calling it multiple
+        // times just resets the 1-second timer), so there's no harm in redundant calls.
         hideScrollBarAfterDelay()
     }
 
@@ -648,7 +647,10 @@ extension DetentScrollViewController {
         displayLink?.invalidate()
         displayLink = nil
         momentumVelocity = 0
-        // Always hide when not actively dragging
+
+        // Hide scroll bar when momentum stops, unless we're mid-drag.
+        // The isDragging check prevents hiding when stopMomentum is called from
+        // handleDragBegan (which cancels any existing momentum before showing the bar).
         if !isDragging {
             hideScrollBarAfterDelay()
         }
