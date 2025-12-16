@@ -313,7 +313,6 @@ extension DetentScrollViewController {
 
         // If multi-touch detected, cancel scroll and let pinch handle it
         if gesture.numberOfTouches > 1 {
-            print("[DetentScroll] Pan: multi-touch detected, cancelling")
             if isDragging {
                 handleDragCancelled()
             }
@@ -325,7 +324,6 @@ extension DetentScrollViewController {
 
         switch gesture.state {
         case .began:
-            print("[DetentScroll] Pan BEGAN")
             handleDragBegan()
 
         case .changed:
@@ -347,8 +345,6 @@ extension DetentScrollViewController {
     }
 
     private func handleDragBegan() {
-        print("[DetentScroll] dragBegan - currentSection: \(currentSection), internalOffset: \(internalOffset), rawDragOffset: \(rawDragOffset)")
-
         // Cancel any in-flight animations
         stopMomentum()
         isSectionAnimating = false
@@ -382,8 +378,6 @@ extension DetentScrollViewController {
         // Check raw drag offset against threshold
         let shouldAdvance = -rawDragOffset > threshold && currentSection < sectionHeights.count - 1
         let shouldRetreat = rawDragOffset > threshold && currentSection > 0
-
-        print("[DetentScroll] dragEnded - rawDragOffset: \(rawDragOffset), threshold: \(threshold), shouldAdvance: \(shouldAdvance), shouldRetreat: \(shouldRetreat), velocity: \(velocity)")
 
         if shouldAdvance {
             animateToSection(currentSection + 1, fromBottom: false)
@@ -481,8 +475,6 @@ extension DetentScrollViewController {
     private func animateToSection(_ section: Int, fromBottom: Bool) {
         let newSection = max(0, min(section, sectionHeights.count - 1))
 
-        print("[DetentScroll] animateToSection START - from: \(currentSection) to: \(newSection), fromBottom: \(fromBottom)")
-
         isSectionAnimating = true
 
         UIView.animate(
@@ -501,9 +493,7 @@ extension DetentScrollViewController {
             self.rawDragOffset = 0
             self.updateContentOffset()
             self.updateScrollBarFrame()
-        } completion: { finished in
-            print("[DetentScroll] animateToSection END - targetSection: \(newSection), finished: \(finished), actualSection: \(self.currentSection)")
-
+        } completion: { _ in
             // Only clear animation flag and notify if we're actually at the target section
             // (animation wasn't overridden by another animation)
             if self.currentSection == newSection {
@@ -515,8 +505,6 @@ extension DetentScrollViewController {
     }
 
     private func animateSnapBack() {
-        print("[DetentScroll] animateSnapBack START - rawDragOffset: \(rawDragOffset)")
-
         UIView.animate(
             withDuration: 0.3,
             delay: 0,
@@ -526,8 +514,6 @@ extension DetentScrollViewController {
         ) {
             self.rawDragOffset = 0
             self.updateContentOffset()
-        } completion: { finished in
-            print("[DetentScroll] animateSnapBack END - finished: \(finished)")
         }
     }
 
@@ -553,12 +539,7 @@ extension DetentScrollViewController {
 
     private func applyMomentum(velocity: CGFloat) {
         let minVelocity: CGFloat = 50
-        guard abs(velocity) > minVelocity else {
-            print("[DetentScroll] applyMomentum SKIPPED - velocity \(velocity) below threshold \(minVelocity)")
-            return
-        }
-
-        print("[DetentScroll] applyMomentum START - velocity: \(velocity)")
+        guard abs(velocity) > minVelocity else { return }
 
         // Flip sign: positive velocity = content moves up = offset increases
         momentumVelocity = -velocity
@@ -628,9 +609,6 @@ extension DetentScrollViewController {
     }
 
     private func stopMomentum() {
-        if displayLink != nil {
-            print("[DetentScroll] stopMomentum - was active, internalOffset: \(internalOffset)")
-        }
         displayLink?.invalidate()
         displayLink = nil
         momentumVelocity = 0
@@ -727,15 +705,12 @@ extension DetentScrollViewController: UIGestureRecognizerDelegate {
 
         // Don't begin if multiple touches (likely a pinch gesture)
         if panGesture.numberOfTouches > 1 {
-            print("[DetentScroll] Pan shouldBegin: NO (multi-touch: \(panGesture.numberOfTouches))")
             return false
         }
 
         // Only handle primarily vertical drags
         let velocity = panGesture.velocity(in: view)
-        let shouldBegin = abs(velocity.y) > abs(velocity.x)
-        print("[DetentScroll] Pan shouldBegin: \(shouldBegin) (vel: \(velocity.y), touches: \(panGesture.numberOfTouches))")
-        return shouldBegin
+        return abs(velocity.y) > abs(velocity.x)
     }
 
     public func gestureRecognizer(
