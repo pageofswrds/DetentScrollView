@@ -108,6 +108,16 @@ public class DetentScrollViewController: UIViewController {
         setupGestures()
     }
 
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        // Clean up scroll bar state when view disappears (e.g., switching tabs)
+        scrollBarHideTask?.cancel()
+        scrollBarHideTask = nil
+        scrollBarView.alpha = 0
+        stopMomentum()
+    }
+
     // MARK: - Setup
 
     private func setupViews() {
@@ -401,10 +411,16 @@ extension DetentScrollViewController {
         isDragging = false
         lastPanTranslation = 0
 
-        // Hide scroll bar after delay if no momentum
+        // Hide scroll bar after delay if no momentum running
+        // (if momentum IS running, stopMomentum will call hideScrollBarAfterDelay when it stops)
         if !isAnimating {
             hideScrollBarAfterDelay()
         }
+
+        // Extra safeguard: always schedule a hide when drag ends
+        // This catches edge cases at scroll boundaries where other code paths might miss it
+        // The hide task self-deduplicates (calling it multiple times just resets the timer)
+        hideScrollBarAfterDelay()
     }
 
     private func handleDragCancelled() {
@@ -632,7 +648,10 @@ extension DetentScrollViewController {
         displayLink?.invalidate()
         displayLink = nil
         momentumVelocity = 0
-        hideScrollBarAfterDelay()
+        // Always hide when not actively dragging
+        if !isDragging {
+            hideScrollBarAfterDelay()
+        }
     }
 
     /// Stops any active momentum animation.
