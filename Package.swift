@@ -8,8 +8,17 @@ let package = Package(
     products: [
         .library(name: "DetentScrollView", targets: ["DetentScrollView"])
     ],
+    dependencies: [
+        .package(path: "../Mercurial")
+    ],
     targets: [
-        .target(name: "DetentScrollView"),
-        .testTarget(name: "DetentScrollViewTests", dependencies: ["DetentScrollView"])
+        .target(
+            name: "DetentScrollView",
+            dependencies: ["Mercurial"]
+        ),
+        .testTarget(
+            name: "DetentScrollViewTests",
+            dependencies: ["DetentScrollView"]
+        )
     ]
 )

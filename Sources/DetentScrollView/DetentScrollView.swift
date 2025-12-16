@@ -6,6 +6,8 @@
 //
 
 import SwiftUI
+import QuartzCore
+import Mercurial
 
 // MARK: - Configuration
 
@@ -17,10 +19,19 @@ public struct DetentScrollConfiguration {
     /// Rubber-band resistance coefficient - higher values produce more resistance (default: 0.55)
     public var resistanceCoefficient: CGFloat
 
+    /// Minimum drag distance before scroll gesture activates (default: 10pt).
+    /// Increase this value if child views need to capture vertical drags.
+    public var minimumDragDistance: CGFloat
+
     /// Creates a configuration with the specified parameters.
-    public init(threshold: CGFloat = 120, resistanceCoefficient: CGFloat = 0.55) {
+    public init(
+        threshold: CGFloat = 120,
+        resistanceCoefficient: CGFloat = 0.55,
+        minimumDragDistance: CGFloat = 10
+    ) {
         self.threshold = threshold
         self.resistanceCoefficient = resistanceCoefficient
+        self.minimumDragDistance = minimumDragDistance
     }
 
     /// Default configuration with standard threshold and resistance values.
@@ -89,6 +100,9 @@ public struct DetentScrollView<Content: View>: View {
     /// Whether external binding is being used (vs internal state only).
     private let usesExternalBinding: Bool
 
+    /// Cached Y offset for the start of each section (computed once at init).
+    private let cachedSectionOffsets: [CGFloat]
+
     // MARK: - Private State
 
     @State private var currentSectionInternal: Int = 0
@@ -101,6 +115,12 @@ public struct DetentScrollView<Content: View>: View {
     @State private var isMomentumActive: Bool = false
     @State private var isScrollBarVisible: Bool = false
     @State private var scrollBarHideTask: Task<Void, Never>?
+    @State private var lastMomentumUpdateTime: CFTimeInterval = 0
+
+    // MARK: - Environment
+
+    /// Respects user's "Reduce Motion" accessibility setting.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // MARK: - Computed Properties
 
@@ -147,10 +167,26 @@ public struct DetentScrollView<Content: View>: View {
         @ViewBuilder content: () -> Content
     ) {
         self.sectionHeights = sectionHeights
-        self.sectionSnapInsets = sectionSnapInsets ?? Array(repeating: 0, count: sectionHeights.count)
+
+        // Ensure snap insets array matches section count (pad with zeros if shorter)
+        let insets = sectionSnapInsets ?? []
+        if insets.count < sectionHeights.count {
+            self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionHeights.count - insets.count)
+        } else {
+            self.sectionSnapInsets = Array(insets.prefix(sectionHeights.count))
+        }
         self.configuration = configuration
         self.isScrollDisabled = isScrollDisabled
         self.content = content()
+
+        // Pre-compute section offsets once (avoids recalculation during animation)
+        var offsets: [CGFloat] = [0]
+        var cumulative: CGFloat = 0
+        for height in sectionHeights.dropLast() {
+            cumulative += height
+            offsets.append(cumulative)
+        }
+        self.cachedSectionOffsets = offsets
 
         if let binding = currentSection {
             self._currentSectionBinding = binding
@@ -178,13 +214,7 @@ public struct DetentScrollView<Content: View>: View {
 
     /// Y offset for the start of each section.
     private var sectionOffsets: [CGFloat] {
-        var offsets: [CGFloat] = [0]
-        var cumulative: CGFloat = 0
-        for height in sectionHeights.dropLast() {
-            cumulative += height
-            offsets.append(cumulative)
-        }
-        return offsets
+        cachedSectionOffsets
     }
 
     /// Current section's starting offset.
@@ -234,11 +264,11 @@ public struct DetentScrollView<Content: View>: View {
 
     /// Apply rubber-band resistance to drag offset.
     private func rubberBand(offset: CGFloat, limit: CGFloat) -> CGFloat {
-        let absOffset = abs(offset)
-        let sign: CGFloat = offset >= 0 ? 1 : -1
-        let coefficient = configuration.resistanceCoefficient
-        let resisted = (1 - (1 / (absOffset * coefficient / limit + 1))) * limit
-        return sign * resisted
+        Physics.rubberBand(
+            offset: offset,
+            limit: limit,
+            coefficient: configuration.resistanceCoefficient
+        )
     }
 
     // MARK: - Scroll Bar
@@ -262,6 +292,7 @@ public struct DetentScrollView<Content: View>: View {
     private var scrollBarHeight: CGFloat {
         guard totalScrollableDistance > 0 else { return 0 }
         let contentRatio = viewportHeight / totalContentHeight
+        // 40pt minimum ensures scroll bar is always visible/tappable
         let baseHeight = max(40, viewportHeight * contentRatio)
 
         // Shrink when overscrolling (bounce or detent resistance)
@@ -276,6 +307,9 @@ public struct DetentScrollView<Content: View>: View {
             overscrollAmount = 0
         }
 
+        // 300pt divisor controls how quickly scroll bar shrinks during overscroll
+        // 0.3 minimum prevents scroll bar from disappearing completely
+        // 20pt absolute minimum for visibility
         let shrinkFactor = max(0.3, 1 - (overscrollAmount / 300))
         return max(20, baseHeight * shrinkFactor)
     }
@@ -326,7 +360,7 @@ public struct DetentScrollView<Content: View>: View {
                 content
                     .offset(y: visualOffset)
                     .gesture(
-                        DragGesture(minimumDistance: 10)
+                        DragGesture(minimumDistance: configuration.minimumDragDistance)
                             .onChanged { value in
                                 // Ignore if scrolling is disabled (e.g., content is zoomed)
                                 guard !isScrollDisabled else { return }
@@ -346,6 +380,10 @@ public struct DetentScrollView<Content: View>: View {
                     .onAppear {
                         viewportHeight = geometry.size.height
                     }
+                    .onDisappear {
+                        scrollBarHideTask?.cancel()
+                        scrollBarHideTask = nil
+                    }
                     .onChange(of: geometry.size.height) { _, newHeight in
                         viewportHeight = newHeight
                     }
@@ -364,8 +402,47 @@ public struct DetentScrollView<Content: View>: View {
                                 .padding(.trailing, 4)
                         }
                     }
+                    .onChange(of: currentSectionInternal) { _, newSection in
+                        announceSection(newSection)
+                    }
+                    .onChange(of: currentSectionBinding) { oldSection, newSection in
+                        // Handle programmatic navigation via binding
+                        if usesExternalBinding && newSection != currentSectionInternal {
+                            scrollToSection(newSection, from: oldSection)
+                        }
+                    }
             }
         }
+    }
+
+    // MARK: - Programmatic Navigation
+
+    /// Scroll to a specific section with animation.
+    /// Called when the external binding changes.
+    private func scrollToSection(_ section: Int, from oldSection: Int) {
+        let clampedSection = max(0, min(section, sectionHeights.count - 1))
+        let animation: Animation? = reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.8)
+
+        withAnimation(animation) {
+            currentSectionInternal = clampedSection
+            // When navigating forward, start at top of new section
+            // When navigating backward, start at bottom of new section (to show transition)
+            if clampedSection > oldSection {
+                internalOffset = 0
+            } else {
+                internalOffset = 0  // Start at top for backward navigation too
+            }
+            rawDragOffset = 0
+        }
+    }
+
+    // MARK: - Accessibility
+
+    /// Announce section change to VoiceOver users.
+    private func announceSection(_ section: Int) {
+        let totalSections = sectionHeights.count
+        let announcement = "Section \(section + 1) of \(totalSections)"
+        AccessibilityNotification.Announcement(announcement).post()
     }
 
     // MARK: - Gesture Handling
@@ -461,9 +538,13 @@ public struct DetentScrollView<Content: View>: View {
         let shouldAdvance = -rawDragOffset > threshold && currentSection < sectionHeights.count - 1
         let shouldRetreat = rawDragOffset > threshold && currentSection > 0
 
+        // Use simple animation when user prefers reduced motion
+        let transitionAnimation: Animation? = reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.4, dampingFraction: 0.8)
+        let snapBackAnimation: Animation? = reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.9)
+
         if shouldAdvance {
             let newSection = currentSection + 1
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            withAnimation(transitionAnimation) {
                 setCurrentSection(newSection)
                 internalOffset = 0
                 rawDragOffset = 0
@@ -471,17 +552,20 @@ public struct DetentScrollView<Content: View>: View {
         } else if shouldRetreat {
             let newSection = currentSection - 1
             let previousSectionMaxScroll = maxInternalScroll(for: newSection)
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            withAnimation(transitionAnimation) {
                 setCurrentSection(newSection)
                 internalOffset = previousSectionMaxScroll
                 rawDragOffset = 0
             }
         } else {
             // No section transition - apply momentum to internal scroll
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+            withAnimation(snapBackAnimation) {
                 rawDragOffset = 0
             }
-            applyMomentum(velocity: velocity)
+            // Skip momentum physics when user prefers reduced motion
+            if !reduceMotion {
+                applyMomentum(velocity: velocity)
+            }
         }
 
         // Reset drag tracking
@@ -513,10 +597,12 @@ public struct DetentScrollView<Content: View>: View {
     /// Start momentum animation with the given velocity.
     /// - Parameter velocity: Gesture velocity in points per second.
     private func applyMomentum(velocity: CGFloat) {
+        // 50 pt/s minimum prevents micro-momentum from tiny flicks
         let minVelocity: CGFloat = 50
         if abs(velocity) > minVelocity {
             // Flip sign: positive velocity = content moves up = offset increases
             momentumVelocity = -velocity
+            lastMomentumUpdateTime = CACurrentMediaTime()
             isMomentumActive = true
         }
     }
@@ -526,7 +612,16 @@ public struct DetentScrollView<Content: View>: View {
     /// Uses friction-based deceleration for normal scrolling and
     /// over-damped spring physics for boundary bounce.
     private func updateMomentum() {
-        let frameTime: CGFloat = 1.0 / 60.0
+        // Calculate actual frame time for correct physics on all refresh rates
+        let currentTime = CACurrentMediaTime()
+        let rawDelta = currentTime - lastMomentumUpdateTime
+        let frameTime = CGFloat(min(rawDelta, 1.0 / 30.0))  // Clamp to prevent jumps on frame drops
+        lastMomentumUpdateTime = currentTime
+
+        // Physics constants tuned for natural iOS feel:
+        // - friction: 0.95 = velocity decays to ~5% after 60 frames (~1 second)
+        // - bounceStiffness: 200 = firm spring, quick return to boundary
+        // - bounceDamping: 30 = over-damped (no oscillation), smooth settle
         let friction: CGFloat = 0.95
         let bounceStiffness: CGFloat = 200
         let bounceDamping: CGFloat = 30
@@ -539,10 +634,18 @@ public struct DetentScrollView<Content: View>: View {
             let boundary: CGFloat = isPastTop ? 0 : maxInternalScroll
             let displacement = internalOffset - boundary
 
-            // F = -kx - cv
-            let springForce = -bounceStiffness * displacement - bounceDamping * momentumVelocity
-            momentumVelocity += springForce * frameTime
-            internalOffset += momentumVelocity * frameTime
+            let force = Physics.springForce(
+                displacement: displacement,
+                velocity: momentumVelocity,
+                stiffness: bounceStiffness,
+                damping: bounceDamping
+            )
+            momentumVelocity += force * frameTime
+            internalOffset = Physics.integrate(
+                position: internalOffset,
+                velocity: momentumVelocity,
+                deltaTime: frameTime
+            )
 
             // Stop when reaching boundary
             let reachedTop = isPastTop && internalOffset >= 0
@@ -556,8 +659,15 @@ public struct DetentScrollView<Content: View>: View {
             }
         } else {
             // Normal friction-based momentum
-            internalOffset += momentumVelocity * frameTime
-            momentumVelocity *= friction
+            internalOffset = Physics.integrate(
+                position: internalOffset,
+                velocity: momentumVelocity,
+                deltaTime: frameTime
+            )
+            momentumVelocity = Physics.applyFriction(
+                velocity: momentumVelocity,
+                friction: friction
+            )
 
             if abs(momentumVelocity) < 1 {
                 momentumVelocity = 0

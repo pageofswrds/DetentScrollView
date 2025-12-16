@@ -94,16 +94,41 @@ public init(
 
 ```swift
 public struct DetentScrollConfiguration {
-    public var threshold: CGFloat        // Default: 120
-    public var resistanceCoefficient: CGFloat  // Default: 0.55
+    public var threshold: CGFloat            // Default: 120
+    public var resistanceCoefficient: CGFloat // Default: 0.55
+    public var minimumDragDistance: CGFloat   // Default: 10
 
     public static let `default` = DetentScrollConfiguration()
 }
 ```
 
+**Parameters:**
+
+- `threshold`: Drag distance required to trigger a section transition
+- `resistanceCoefficient`: Rubber-band strength (higher = less resistance)
+- `minimumDragDistance`: Minimum drag before scroll activates (increase if child views need vertical gestures)
+
 ### Properties
 
 - `isScrolled: Bool` — Whether the user has scrolled past the first section
+
+## Programmatic Navigation
+
+Change the `currentSection` binding to navigate with animation:
+
+```swift
+@State private var section = 0
+
+DetentScrollView(
+    sectionHeights: [...],
+    currentSection: $section
+) { ... }
+
+// Navigate to section 2 with animation
+Button("Go to Section 2") {
+    section = 2
+}
+```
 
 ## Gesture Coordination
 
@@ -121,6 +146,17 @@ DetentScrollView(
     })
 }
 ```
+
+## Roadmap
+
+See [IMPROVEMENTS.md](IMPROVEMENTS.md) for planned improvements including:
+
+- [x] Fix frame rate assumption for ProMotion displays
+- [x] Fix potential memory leak in scroll bar hide task
+- [x] Cache section offsets for better performance during animation
+- [x] Add comprehensive unit tests for physics and transitions
+- [x] Improve array bounds validation
+- [x] Add accessibility support (reduce motion, VoiceOver)
 
 ## License
 
