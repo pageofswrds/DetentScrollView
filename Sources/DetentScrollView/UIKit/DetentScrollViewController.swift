@@ -375,17 +375,26 @@ extension DetentScrollViewController {
     private func handleDragEnded(translation: CGFloat, velocity: CGFloat) {
         let threshold = configuration.threshold
 
-        // Check raw drag offset against threshold
-        let shouldAdvance = -rawDragOffset > threshold && currentSection < sectionHeights.count - 1
-        let shouldRetreat = rawDragOffset > threshold && currentSection > 0
+        // Velocity-based triggering thresholds
+        let velocityThreshold: CGFloat = 800  // points per second
+        let minDistanceForVelocity: CGFloat = 30  // minimum drag to consider velocity
+
+        // Check raw drag offset against threshold, or use velocity for quick flicks
+        let distanceAdvance = -rawDragOffset > threshold
+        let velocityAdvance = -rawDragOffset > minDistanceForVelocity && -velocity > velocityThreshold
+        let shouldAdvance = (distanceAdvance || velocityAdvance) && currentSection < sectionHeights.count - 1
+
+        let distanceRetreat = rawDragOffset > threshold
+        let velocityRetreat = rawDragOffset > minDistanceForVelocity && velocity > velocityThreshold
+        let shouldRetreat = (distanceRetreat || velocityRetreat) && currentSection > 0
 
         if shouldAdvance {
-            animateToSection(currentSection + 1, fromBottom: false)
+            animateToSection(currentSection + 1, fromBottom: false, velocity: velocity)
         } else if shouldRetreat {
-            animateToSection(currentSection - 1, fromBottom: true)
+            animateToSection(currentSection - 1, fromBottom: true, velocity: velocity)
         } else {
             // No section transition - snap back and apply momentum
-            animateSnapBack()
+            animateSnapBack(velocity: velocity)
             applyMomentum(velocity: velocity)
         }
 
@@ -401,7 +410,7 @@ extension DetentScrollViewController {
     private func handleDragCancelled() {
         isDragging = false
         lastPanTranslation = 0
-        animateSnapBack()
+        animateSnapBack(velocity: 0)
         hideScrollBarAfterDelay()
     }
 
@@ -472,17 +481,24 @@ extension DetentScrollViewController {
 
 extension DetentScrollViewController {
 
-    private func animateToSection(_ section: Int, fromBottom: Bool) {
+    private func animateToSection(_ section: Int, fromBottom: Bool, velocity: CGFloat = 0) {
         let newSection = max(0, min(section, sectionHeights.count - 1))
 
         isSectionAnimating = true
+
+        // Calculate spring velocity relative to the distance we're animating
+        // UIKit's initialSpringVelocity is in "units per second / total distance"
+        let targetOffset = sectionOffsets[newSection] - snapInset(for: newSection)
+        let currentVisualOffset = currentSectionOffset - currentSnapInset + internalOffset
+        let distance = abs(targetOffset - currentVisualOffset)
+        let springVelocity = distance > 0 ? abs(velocity) / distance : 0
 
         UIView.animate(
             withDuration: 0.4,
             delay: 0,
             usingSpringWithDamping: 0.8,
-            initialSpringVelocity: 0,
-            options: [.curveEaseOut, .allowUserInteraction]
+            initialSpringVelocity: springVelocity,
+            options: [.allowUserInteraction]
         ) {
             self.currentSection = newSection
             if fromBottom {
@@ -504,13 +520,17 @@ extension DetentScrollViewController {
         }
     }
 
-    private func animateSnapBack() {
+    private func animateSnapBack(velocity: CGFloat = 0) {
+        // Calculate spring velocity relative to the snap distance
+        let distance = abs(rawDragOffset)
+        let springVelocity = distance > 0 ? abs(velocity) / distance : 0
+
         UIView.animate(
             withDuration: 0.3,
             delay: 0,
             usingSpringWithDamping: 0.9,
-            initialSpringVelocity: 0,
-            options: [.curveEaseOut, .allowUserInteraction]
+            initialSpringVelocity: springVelocity,
+            options: [.allowUserInteraction]
         ) {
             self.rawDragOffset = 0
             self.updateContentOffset()
