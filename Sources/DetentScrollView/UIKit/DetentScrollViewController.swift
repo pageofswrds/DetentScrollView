@@ -108,6 +108,16 @@ public class DetentScrollViewController: UIViewController {
         setupGestures()
     }
 
+    public override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        // Clean up scroll bar state when view disappears (e.g., switching tabs)
+        scrollBarHideTask?.cancel()
+        scrollBarHideTask = nil
+        scrollBarView.alpha = 0
+        stopMomentum()
+    }
+
     // MARK: - Setup
 
     private func setupViews() {
@@ -401,10 +411,15 @@ extension DetentScrollViewController {
         isDragging = false
         lastPanTranslation = 0
 
-        // Hide scroll bar after delay if no momentum
-        if !isAnimating {
-            hideScrollBarAfterDelay()
-        }
+        // Always schedule scroll bar hide when drag ends.
+        //
+        // Why unconditional: There are multiple code paths that should hide the scroll bar
+        // (stopMomentum, animateToSection completion, etc.), but edge cases at scroll
+        // boundaries - particularly at the bottom of the last section - can cause the
+        // hide to not trigger. Rather than chase down every edge case, we always schedule
+        // a hide here as a safeguard. The hide task self-deduplicates (calling it multiple
+        // times just resets the 1-second timer), so there's no harm in redundant calls.
+        hideScrollBarAfterDelay()
     }
 
     private func handleDragCancelled() {
@@ -632,7 +647,13 @@ extension DetentScrollViewController {
         displayLink?.invalidate()
         displayLink = nil
         momentumVelocity = 0
-        hideScrollBarAfterDelay()
+
+        // Hide scroll bar when momentum stops, unless we're mid-drag.
+        // The isDragging check prevents hiding when stopMomentum is called from
+        // handleDragBegan (which cancels any existing momentum before showing the bar).
+        if !isDragging {
+            hideScrollBarAfterDelay()
+        }
     }
 
     /// Stops any active momentum animation.
@@ -650,7 +671,8 @@ extension DetentScrollViewController {
     }
 
     private var currentAbsoluteOffset: CGFloat {
-        currentSectionOffset + internalOffset
+        // Account for snap inset - this represents the visual scroll position
+        currentSectionOffset - currentSnapInset + internalOffset
     }
 
     private var scrollBarHeight: CGFloat {
