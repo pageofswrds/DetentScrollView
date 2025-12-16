@@ -650,7 +650,8 @@ extension DetentScrollViewController {
     }
 
     private var currentAbsoluteOffset: CGFloat {
-        currentSectionOffset + internalOffset
+        // Account for snap inset - this represents the visual scroll position
+        currentSectionOffset - currentSnapInset + internalOffset
     }
 
     private var scrollBarHeight: CGFloat {
