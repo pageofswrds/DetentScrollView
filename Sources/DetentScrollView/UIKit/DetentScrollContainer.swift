@@ -8,6 +8,46 @@
 
 import SwiftUI
 
+// MARK: - Drag Injection Handler
+
+/// Handler for injecting vertical drag events into the DetentScrollView.
+///
+/// Use this when a SwiftUI child view captures a gesture but wants to forward
+/// vertical movement to the parent scroll view.
+public class DetentScrollDragHandler: ObservableObject {
+    weak var controller: DetentScrollViewController?
+
+    public init() {}
+
+    /// Injects a vertical drag translation into the scroll view.
+    /// Call this from your gesture's `onChanged` with the vertical translation.
+    @MainActor
+    public func injectDrag(translation: CGFloat) {
+        controller?.injectDrag(translation: translation)
+    }
+
+    /// Ends the injected drag gesture.
+    /// Call this from your gesture's `onEnded` with the vertical velocity.
+    @MainActor
+    public func injectDragEnd(velocity: CGFloat) {
+        controller?.injectDragEnd(velocity: velocity)
+    }
+}
+
+// MARK: - Environment Key
+
+private struct DetentScrollDragHandlerKey: EnvironmentKey {
+    static let defaultValue: DetentScrollDragHandler? = nil
+}
+
+public extension EnvironmentValues {
+    /// Handler for injecting drag events into the parent DetentScrollContainer.
+    var detentScrollDragHandler: DetentScrollDragHandler? {
+        get { self[DetentScrollDragHandlerKey.self] }
+        set { self[DetentScrollDragHandlerKey.self] = newValue }
+    }
+}
+
 /// A UIKit-based detent scroll view wrapped for SwiftUI.
 ///
 /// This is an alternative to `DetentScrollView` that uses UIKit's `UIPanGestureRecognizer`
@@ -54,6 +94,13 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     /// Whether external binding is being used.
     private let usesExternalBinding: Bool
 
+    /// Binding to observe scroll progress (0.0 = section 0, 1.0 = section 1+).
+    /// Enables scroll-driven animations like collapsing headers.
+    @Binding private var scrollProgress: CGFloat
+
+    /// Whether scroll progress binding is being used.
+    private let usesScrollProgressBinding: Bool
+
     // MARK: - Content
 
     /// The SwiftUI content to display.
@@ -68,6 +115,7 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     ///   - sectionSnapInsets: Optional insets for each section (default: all zeros).
     ///   - configuration: Threshold and resistance configuration.
     ///   - currentSection: Optional binding to observe/control current section.
+    ///   - scrollProgress: Optional binding to observe scroll progress (0.0-1.0) for scroll-driven animations.
     ///   - isScrollDisabled: External signal to disable scrolling.
     ///   - content: The content to display.
     public init(
@@ -75,6 +123,7 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         sectionSnapInsets: [CGFloat]? = nil,
         configuration: DetentScrollConfiguration = .default,
         currentSection: Binding<Int>? = nil,
+        scrollProgress: Binding<CGFloat>? = nil,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
@@ -99,6 +148,14 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
             self._currentSection = .constant(0)
             self.usesExternalBinding = false
         }
+
+        if let binding = scrollProgress {
+            self._scrollProgress = binding
+            self.usesScrollProgressBinding = true
+        } else {
+            self._scrollProgress = .constant(0)
+            self.usesScrollProgressBinding = false
+        }
     }
 
     // MARK: - UIViewControllerRepresentable
@@ -116,12 +173,22 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         controller.configuration = configuration
         controller.isScrollDisabled = isScrollDisabled
 
-        // Set content
-        controller.setContent(content)
+        // Wire up drag handler to controller
+        context.coordinator.dragHandler.controller = controller
+
+        // Set content with drag handler in environment
+        let contentWithEnvironment = content
+            .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+        controller.setContent(contentWithEnvironment)
 
         // Set callback for section changes
         controller.onSectionChanged = { [weak coordinator = context.coordinator] section in
             coordinator?.sectionChanged(section)
+        }
+
+        // Set callback for scroll progress (scroll-driven animations)
+        controller.onScrollProgress = { [weak coordinator = context.coordinator] progress in
+            coordinator?.scrollProgressChanged(progress)
         }
 
         return controller
@@ -134,8 +201,13 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         controller.configuration = configuration
         controller.isScrollDisabled = isScrollDisabled
 
-        // Update content
-        controller.setContent(content)
+        // Ensure drag handler has current controller reference
+        context.coordinator.dragHandler.controller = controller
+
+        // Update content with drag handler in environment
+        let contentWithEnvironment = content
+            .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+        controller.setContent(contentWithEnvironment)
 
         // Handle programmatic section changes from binding
         // Don't trigger during animations to avoid feedback loops with rapid swiping
@@ -148,6 +220,7 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
 
     public class Coordinator {
         var parent: DetentScrollContainer
+        let dragHandler = DetentScrollDragHandler()
 
         init(_ parent: DetentScrollContainer) {
             self.parent = parent
@@ -156,6 +229,12 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         func sectionChanged(_ section: Int) {
             if parent.usesExternalBinding {
                 parent.currentSection = section
+            }
+        }
+
+        func scrollProgressChanged(_ progress: CGFloat) {
+            if parent.usesScrollProgressBinding {
+                parent.scrollProgress = progress
             }
         }
     }
