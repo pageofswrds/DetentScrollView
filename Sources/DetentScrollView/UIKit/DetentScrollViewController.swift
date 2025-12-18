@@ -393,12 +393,18 @@ extension DetentScrollViewController {
         stopMomentum()
         stopProgressAnimation()
 
-        // Cancel ALL UIView animations on the content container.
-        // This includes both section transition animations AND snap-back animations.
-        // Both animate contentContainerView.frame.origin.y, which conflicts with
-        // direct frame updates from drag handling and momentum. Without this,
-        // touching during any animation causes the UIView animation to fight with
-        // gesture/momentum updates, resulting in velocity jumps and jitter.
+        // SURGICAL FIX for animation interruption:
+        // Before removing UIView animations, capture the presentation layer's current
+        // position and set the frame to match. This prevents the visual "snap" that
+        // occurs when removeAllAnimations() causes the presentation layer to jump
+        // to the model layer's final values.
+        if isSectionAnimating {
+            if let presentationY = contentContainerView.layer.presentation()?.frame.origin.y {
+                contentContainerView.frame.origin.y = presentationY
+            }
+        }
+
+        // Now remove animations - no visual jump because frame already matches presentation
         contentContainerView.layer.removeAllAnimations()
         isSectionAnimating = false
 
@@ -748,6 +754,14 @@ extension DetentScrollViewController {
             // Cancel any in-flight animations
             stopMomentum()
             stopProgressAnimation()
+
+            // SURGICAL FIX for animation interruption (same as handleDragBegan):
+            // Capture presentation layer position before removing animations
+            if isSectionAnimating {
+                if let presentationY = contentContainerView.layer.presentation()?.frame.origin.y {
+                    contentContainerView.frame.origin.y = presentationY
+                }
+            }
             contentContainerView.layer.removeAllAnimations()
             isSectionAnimating = false
 
