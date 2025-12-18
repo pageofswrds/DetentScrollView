@@ -74,8 +74,11 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
 
     // MARK: - Configuration
 
-    /// Height of each section in points.
-    public let sectionHeights: [CGFloat]
+    /// Fixed section heights (nil when using dynamic measurement).
+    private let fixedSectionHeights: [CGFloat]?
+
+    /// Number of sections for dynamic height mode.
+    private let sectionCount: Int?
 
     /// How far from viewport top each section starts when snapped.
     public let sectionSnapInsets: [CGFloat]
@@ -85,6 +88,11 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
 
     /// External signal to disable scrolling (e.g., when content is zoomed).
     public let isScrollDisabled: Bool
+
+    /// Whether using dynamic height measurement.
+    private var usesDynamicHeights: Bool {
+        sectionCount != nil
+    }
 
     // MARK: - Bindings
 
@@ -108,7 +116,9 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
 
     // MARK: - Initializers
 
-    /// Creates a detent scroll container with the specified sections and configuration.
+    /// Creates a detent scroll container with fixed section heights.
+    ///
+    /// Use this initializer when you know the exact height of each section upfront.
     ///
     /// - Parameters:
     ///   - sectionHeights: Height of each section in points.
@@ -127,7 +137,8 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
-        self.sectionHeights = sectionHeights
+        self.fixedSectionHeights = sectionHeights
+        self.sectionCount = nil
 
         // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
@@ -135,6 +146,73 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
             self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionHeights.count - insets.count)
         } else {
             self.sectionSnapInsets = Array(insets.prefix(sectionHeights.count))
+        }
+
+        self.configuration = configuration
+        self.isScrollDisabled = isScrollDisabled
+        self.content = content()
+
+        if let binding = currentSection {
+            self._currentSection = binding
+            self.usesExternalBinding = true
+        } else {
+            self._currentSection = .constant(0)
+            self.usesExternalBinding = false
+        }
+
+        if let binding = scrollProgress {
+            self._scrollProgress = binding
+            self.usesScrollProgressBinding = true
+        } else {
+            self._scrollProgress = .constant(0)
+            self.usesScrollProgressBinding = false
+        }
+    }
+
+    /// Creates a detent scroll container with dynamically measured section heights.
+    ///
+    /// Use this initializer when section heights should be determined by their content.
+    /// Wrap each section in a `DetentSection` view to enable height measurement:
+    ///
+    /// ```swift
+    /// DetentScrollContainer(sectionCount: 2) {
+    ///     VStack(spacing: 0) {
+    ///         DetentSection(index: 0) {
+    ///             Section1Content()
+    ///         }
+    ///         DetentSection(index: 1) {
+    ///             Section2Content()
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - sectionCount: The number of sections to track.
+    ///   - sectionSnapInsets: Optional insets for each section (default: all zeros).
+    ///   - configuration: Threshold and resistance configuration.
+    ///   - currentSection: Optional binding to observe/control current section.
+    ///   - scrollProgress: Optional binding to observe scroll progress (0.0-1.0) for scroll-driven animations.
+    ///   - isScrollDisabled: External signal to disable scrolling.
+    ///   - content: The content to display. Each section should be wrapped in `DetentSection`.
+    public init(
+        sectionCount: Int,
+        sectionSnapInsets: [CGFloat]? = nil,
+        configuration: DetentScrollConfiguration = .default,
+        currentSection: Binding<Int>? = nil,
+        scrollProgress: Binding<CGFloat>? = nil,
+        isScrollDisabled: Bool = false,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.fixedSectionHeights = nil
+        self.sectionCount = sectionCount
+
+        // Ensure snap insets array matches section count
+        let insets = sectionSnapInsets ?? []
+        if insets.count < sectionCount {
+            self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionCount - insets.count)
+        } else {
+            self.sectionSnapInsets = Array(insets.prefix(sectionCount))
         }
 
         self.configuration = configuration
@@ -167,8 +245,20 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     public func makeUIViewController(context: Context) -> DetentScrollViewController {
         let controller = DetentScrollViewController()
 
+        // Determine initial heights
+        let initialHeights: [CGFloat]
+        if let fixed = fixedSectionHeights {
+            initialHeights = fixed
+        } else if let count = sectionCount {
+            // Dynamic mode: use coordinator's measured heights or defaults
+            initialHeights = context.coordinator.heightCoordinator?.measuredHeights
+                ?? Array(repeating: 800, count: count)
+        } else {
+            initialHeights = []
+        }
+
         // Set configuration
-        controller.sectionHeights = sectionHeights
+        controller.sectionHeights = initialHeights
         controller.sectionSnapInsets = sectionSnapInsets
         controller.configuration = configuration
         controller.isScrollDisabled = isScrollDisabled
@@ -176,9 +266,30 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         // Wire up drag handler to controller
         context.coordinator.dragHandler.controller = controller
 
-        // Set content with drag handler in environment
-        let contentWithEnvironment = content
-            .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+        // Store controller reference in coordinator for height updates
+        context.coordinator.controller = controller
+
+        // Set up height coordinator callback
+        context.coordinator.heightCoordinator?.onHeightsChanged = { [weak controller] heights in
+            controller?.updateSectionHeights(heights)
+        }
+
+        // Build content with environment and preference handling
+        let contentWithEnvironment: AnyView
+        if usesDynamicHeights {
+            contentWithEnvironment = AnyView(
+                content
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+                    .onPreferenceChange(SectionHeightPreferenceKey.self) { heights in
+                        context.coordinator.heightCoordinator?.receiveHeights(heights)
+                    }
+            )
+        } else {
+            contentWithEnvironment = AnyView(
+                content
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+            )
+        }
         controller.setContent(contentWithEnvironment)
 
         // Set callback for section changes
@@ -195,18 +306,54 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     }
 
     public func updateUIViewController(_ controller: DetentScrollViewController, context: Context) {
-        // Update configuration if changed
-        controller.sectionHeights = sectionHeights
+        // Update configuration
         controller.sectionSnapInsets = sectionSnapInsets
         controller.configuration = configuration
         controller.isScrollDisabled = isScrollDisabled
 
         // Ensure drag handler has current controller reference
         context.coordinator.dragHandler.controller = controller
+        context.coordinator.controller = controller
 
-        // Update content with drag handler in environment
-        let contentWithEnvironment = content
-            .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+        // Handle height updates based on mode
+        if let fixed = fixedSectionHeights {
+            // Fixed mode: directly set heights
+            if controller.sectionHeights != fixed {
+                controller.updateSectionHeights(fixed)
+            }
+        } else if let heightCoordinator = context.coordinator.heightCoordinator {
+            // Dynamic mode: manage deferral based on animation state
+            let wasDeferred = heightCoordinator.shouldDeferUpdates
+            heightCoordinator.shouldDeferUpdates = controller.isAnimating
+
+            // Flush pending updates when animation completes
+            if wasDeferred && !controller.isAnimating {
+                heightCoordinator.flushPendingUpdates()
+            }
+
+            // Sync measured heights to controller if different
+            let measured = heightCoordinator.measuredHeights
+            if controller.sectionHeights != measured {
+                controller.updateSectionHeights(measured)
+            }
+        }
+
+        // Build content with environment and preference handling
+        let contentWithEnvironment: AnyView
+        if usesDynamicHeights {
+            contentWithEnvironment = AnyView(
+                content
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+                    .onPreferenceChange(SectionHeightPreferenceKey.self) { heights in
+                        context.coordinator.heightCoordinator?.receiveHeights(heights)
+                    }
+            )
+        } else {
+            contentWithEnvironment = AnyView(
+                content
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+            )
+        }
         controller.setContent(contentWithEnvironment)
 
         // Handle programmatic section changes from binding
@@ -221,9 +368,16 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     public class Coordinator {
         var parent: DetentScrollContainer
         let dragHandler = DetentScrollDragHandler()
+        var heightCoordinator: SectionHeightCoordinator?
+        weak var controller: DetentScrollViewController?
 
         init(_ parent: DetentScrollContainer) {
             self.parent = parent
+
+            // Create height coordinator for dynamic mode
+            if let count = parent.sectionCount {
+                self.heightCoordinator = SectionHeightCoordinator(sectionCount: count)
+            }
         }
 
         func sectionChanged(_ section: Int) {

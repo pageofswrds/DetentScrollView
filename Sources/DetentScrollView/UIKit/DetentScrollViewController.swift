@@ -780,6 +780,58 @@ extension DetentScrollViewController {
         }
     }
 
+    /// Updates section heights while preserving scroll position.
+    ///
+    /// Use this method when section heights change dynamically (e.g., content was added/removed).
+    /// The method recalculates internal state to maintain the user's visual scroll position.
+    ///
+    /// - Parameters:
+    ///   - newHeights: The new heights for each section.
+    ///   - animated: Whether to animate the layout update (default: false).
+    public func updateSectionHeights(_ newHeights: [CGFloat], animated: Bool = false) {
+        guard newHeights != sectionHeights else { return }
+
+        // Capture current absolute position before changing heights
+        let currentAbsolutePosition = currentSectionOffset + internalOffset
+
+        // Apply new heights (this triggers updateSectionOffsets via didSet)
+        sectionHeights = newHeights
+
+        // Ensure snap insets array matches new section count
+        if sectionSnapInsets.count < newHeights.count {
+            sectionSnapInsets += Array(repeating: 0, count: newHeights.count - sectionSnapInsets.count)
+        } else if sectionSnapInsets.count > newHeights.count {
+            sectionSnapInsets = Array(sectionSnapInsets.prefix(newHeights.count))
+        }
+
+        // Clamp current section to valid range
+        if currentSection >= newHeights.count {
+            currentSection = max(0, newHeights.count - 1)
+        }
+
+        // Recalculate internalOffset to maintain visual position
+        // The section offset may have changed if preceding sections changed height
+        let newSectionOffset = currentSectionOffset
+        let positionDelta = newSectionOffset - currentAbsolutePosition
+
+        // Adjust internalOffset to compensate, clamped to valid range
+        internalOffset = max(0, min(-positionDelta, maxInternalScroll))
+
+        // Update display
+        if animated {
+            UIView.animate(withDuration: 0.2) {
+                self.updateContentOffset()
+                self.updateScrollBarFrame()
+            }
+        } else {
+            updateContentOffset()
+            updateScrollBarFrame()
+        }
+
+        // Trigger layout update for hosting controller
+        view.setNeedsLayout()
+    }
+
     // MARK: - External Drag Injection
 
     /// Injects a drag event from an external source (e.g., a SwiftUI child view).
