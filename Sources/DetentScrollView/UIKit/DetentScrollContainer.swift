@@ -8,6 +8,46 @@
 
 import SwiftUI
 
+// MARK: - Drag Injection Handler
+
+/// Handler for injecting vertical drag events into the DetentScrollView.
+///
+/// Use this when a SwiftUI child view captures a gesture but wants to forward
+/// vertical movement to the parent scroll view.
+public class DetentScrollDragHandler: ObservableObject {
+    weak var controller: DetentScrollViewController?
+
+    public init() {}
+
+    /// Injects a vertical drag translation into the scroll view.
+    /// Call this from your gesture's `onChanged` with the vertical translation.
+    @MainActor
+    public func injectDrag(translation: CGFloat) {
+        controller?.injectDrag(translation: translation)
+    }
+
+    /// Ends the injected drag gesture.
+    /// Call this from your gesture's `onEnded` with the vertical velocity.
+    @MainActor
+    public func injectDragEnd(velocity: CGFloat) {
+        controller?.injectDragEnd(velocity: velocity)
+    }
+}
+
+// MARK: - Environment Key
+
+private struct DetentScrollDragHandlerKey: EnvironmentKey {
+    static let defaultValue: DetentScrollDragHandler? = nil
+}
+
+public extension EnvironmentValues {
+    /// Handler for injecting drag events into the parent DetentScrollContainer.
+    var detentScrollDragHandler: DetentScrollDragHandler? {
+        get { self[DetentScrollDragHandlerKey.self] }
+        set { self[DetentScrollDragHandlerKey.self] = newValue }
+    }
+}
+
 /// A UIKit-based detent scroll view wrapped for SwiftUI.
 ///
 /// This is an alternative to `DetentScrollView` that uses UIKit's `UIPanGestureRecognizer`
@@ -133,8 +173,13 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         controller.configuration = configuration
         controller.isScrollDisabled = isScrollDisabled
 
-        // Set content
-        controller.setContent(content)
+        // Wire up drag handler to controller
+        context.coordinator.dragHandler.controller = controller
+
+        // Set content with drag handler in environment
+        let contentWithEnvironment = content
+            .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+        controller.setContent(contentWithEnvironment)
 
         // Set callback for section changes
         controller.onSectionChanged = { [weak coordinator = context.coordinator] section in
@@ -156,8 +201,13 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         controller.configuration = configuration
         controller.isScrollDisabled = isScrollDisabled
 
-        // Update content
-        controller.setContent(content)
+        // Ensure drag handler has current controller reference
+        context.coordinator.dragHandler.controller = controller
+
+        // Update content with drag handler in environment
+        let contentWithEnvironment = content
+            .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+        controller.setContent(contentWithEnvironment)
 
         // Handle programmatic section changes from binding
         // Don't trigger during animations to avoid feedback loops with rapid swiping
@@ -170,6 +220,7 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
 
     public class Coordinator {
         var parent: DetentScrollContainer
+        let dragHandler = DetentScrollDragHandler()
 
         init(_ parent: DetentScrollContainer) {
             self.parent = parent

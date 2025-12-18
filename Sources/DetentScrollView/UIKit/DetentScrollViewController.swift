@@ -125,6 +125,14 @@ public class DetentScrollViewController: UIViewController {
     /// Pan gesture recognizer for scrolling.
     private var panGesture: UIPanGestureRecognizer!
 
+    // MARK: - External Drag State
+
+    /// Whether an external drag (injected from SwiftUI child) is active.
+    private var isExternalDragActive: Bool = false
+
+    /// Last translation for external drag delta calculation.
+    private var lastExternalTranslation: CGFloat = 0
+
     // MARK: - Lifecycle
 
     public override func viewDidLoad() {
@@ -601,9 +609,13 @@ extension DetentScrollViewController {
             self.rawDragOffset = 0
             self.updateContentOffset()
             self.updateScrollBarFrame()
-        } completion: { _ in
-            // Only clear animation flag and notify if we're actually at the target section
-            // (animation wasn't overridden by another animation)
+        } completion: { finished in
+            // Only clear animation flag and notify if animation completed naturally.
+            // If animation was cancelled (finished = false), don't trigger callbacks
+            // as this can cause SwiftUI state updates mid-gesture that interfere
+            // with the current drag operation.
+            guard finished else { return }
+
             if self.currentSection == newSection {
                 self.isSectionAnimating = false
                 self.onSectionChanged?(newSection)
@@ -715,6 +727,62 @@ extension DetentScrollViewController {
             onSectionChanged?(clampedSection)
         }
     }
+
+    // MARK: - External Drag Injection
+
+    /// Injects a drag event from an external source (e.g., a SwiftUI child view).
+    ///
+    /// This allows SwiftUI child views that detect vertical drag gestures to forward
+    /// them to the scroll view, enabling scrolling even when the gesture started on
+    /// a child view with its own gesture recognizer.
+    ///
+    /// - Parameter translation: The cumulative vertical translation of the drag.
+    public func injectDrag(translation: CGFloat) {
+        guard !isScrollDisabled else { return }
+
+        // Start external drag if not already active
+        if !isExternalDragActive {
+            isExternalDragActive = true
+            lastExternalTranslation = 0
+
+            // Cancel any in-flight animations
+            stopMomentum()
+            stopProgressAnimation()
+            contentContainerView.layer.removeAllAnimations()
+            isSectionAnimating = false
+
+            isDragging = true
+            showScrollBar()
+        }
+
+        // Calculate delta from last translation
+        let delta = translation - lastExternalTranslation
+        lastExternalTranslation = translation
+
+        // Apply the scroll (same as internal gesture handling)
+        if delta > 0 {
+            applyScrollUp(delta: delta)
+        } else if delta < 0 {
+            applyScrollDown(delta: delta)
+        }
+
+        updateContentOffset()
+        updateScrollBarFrame()
+        reportScrollProgress()
+    }
+
+    /// Ends an externally injected drag gesture.
+    ///
+    /// - Parameter velocity: The vertical velocity of the drag at release.
+    public func injectDragEnd(velocity: CGFloat) {
+        guard isExternalDragActive else { return }
+
+        isExternalDragActive = false
+        lastExternalTranslation = 0
+
+        // Use the same logic as internal gesture end
+        handleDragEnded(translation: 0, velocity: velocity)
+    }
 }
 
 // MARK: - Momentum Physics
@@ -727,13 +795,25 @@ extension DetentScrollViewController {
 
         // Flip sign: positive velocity = content moves up = offset increases
         momentumVelocity = -velocity
-        lastMomentumTime = CACurrentMediaTime()
 
-        displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
-        displayLink?.add(to: .main, forMode: .common)
+        // Only create display link if one doesn't already exist.
+        // animateSnapBack may have already started one for the same updateMomentum loop.
+        // Creating a duplicate link causes double-speed momentum (the acceleration bug).
+        if displayLink == nil {
+            lastMomentumTime = CACurrentMediaTime()
+            displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
+            displayLink?.add(to: .main, forMode: .common)
+        }
     }
 
     @objc private func updateMomentum() {
+        // Safety: never run momentum physics during an active drag.
+        // This prevents the snap-back spring from fighting with user input.
+        guard !isDragging else {
+            stopMomentum()
+            return
+        }
+
         let currentTime = CACurrentMediaTime()
         let rawDelta = currentTime - lastMomentumTime
         let frameTime = CGFloat(min(rawDelta, 1.0 / 30.0))
@@ -743,9 +823,9 @@ extension DetentScrollViewController {
         let bounceStiffness: CGFloat = 200
         let bounceDamping: CGFloat = 30
 
-        // Spring constants for rawDragOffset snap-back (slightly softer than bounce)
+        // Spring constants for rawDragOffset snap-back (over-damped to prevent overshoot)
         let snapBackStiffness: CGFloat = 180
-        let snapBackDamping: CGFloat = 25
+        let snapBackDamping: CGFloat = 28  // > 2*sqrt(180) ≈ 26.8 for over-damped
 
         // --- Update internalOffset momentum ---
         var momentumComplete = false
