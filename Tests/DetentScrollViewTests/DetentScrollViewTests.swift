@@ -32,7 +32,7 @@ final class DetentScrollViewTests: XCTestCase {
     // MARK: - View Instantiation Tests
 
     func testViewInstantiation() {
-        let _ = DetentScrollView(sectionHeights: [800, 600]) {
+        let _ = DetentScrollContainer(sectionHeights: [800, 600]) {
             VStack {
                 Color.blue.frame(height: 800)
                 Color.green.frame(height: 600)
@@ -42,7 +42,7 @@ final class DetentScrollViewTests: XCTestCase {
 
     func testViewWithConfiguration() {
         let config = DetentScrollConfiguration(threshold: 150, resistanceCoefficient: 0.6)
-        let _ = DetentScrollView(
+        let _ = DetentScrollContainer(
             sectionHeights: [400, 400, 400],
             sectionSnapInsets: [0, 50, 0],
             configuration: config
@@ -56,7 +56,7 @@ final class DetentScrollViewTests: XCTestCase {
     }
 
     func testSingleSection() {
-        let _ = DetentScrollView(sectionHeights: [800]) {
+        let _ = DetentScrollContainer(sectionHeights: [800]) {
             Color.blue.frame(height: 800)
         }
     }
@@ -65,7 +65,7 @@ final class DetentScrollViewTests: XCTestCase {
 
     func testSnapInsetsNilDefaultsToZeros() {
         // When nil, should create array of zeros matching section count
-        let _ = DetentScrollView(
+        let _ = DetentScrollContainer(
             sectionHeights: [400, 400, 400],
             sectionSnapInsets: nil
         ) {
@@ -76,7 +76,7 @@ final class DetentScrollViewTests: XCTestCase {
 
     func testSnapInsetsShorterThanHeights() {
         // When fewer insets than heights, should pad with zeros
-        let _ = DetentScrollView(
+        let _ = DetentScrollContainer(
             sectionHeights: [400, 400, 400],
             sectionSnapInsets: [0, 50]  // Missing third inset
         ) {
@@ -86,7 +86,7 @@ final class DetentScrollViewTests: XCTestCase {
 
     func testSnapInsetsLongerThanHeights() {
         // When more insets than heights, should truncate
-        let _ = DetentScrollView(
+        let _ = DetentScrollContainer(
             sectionHeights: [400, 400],
             sectionSnapInsets: [0, 50, 100, 150]  // Too many insets
         ) {
@@ -96,7 +96,7 @@ final class DetentScrollViewTests: XCTestCase {
 
     func testEmptySnapInsets() {
         // Empty array should be padded to match heights
-        let _ = DetentScrollView(
+        let _ = DetentScrollContainer(
             sectionHeights: [400, 400, 400],
             sectionSnapInsets: []
         ) {

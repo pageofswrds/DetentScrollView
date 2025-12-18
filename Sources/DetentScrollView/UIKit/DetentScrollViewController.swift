@@ -61,24 +61,50 @@ public class DetentScrollViewController: UIViewController {
     /// Display link for momentum animation.
     private var displayLink: CADisplayLink?
 
-    /// Current momentum velocity.
+    /// Current momentum velocity for internalOffset.
     private var momentumVelocity: CGFloat = 0
+
+    /// Current spring velocity for rawDragOffset snap-back.
+    /// This is integrated into the momentum display link to avoid conflicts
+    /// between UIView animations and display link frame updates.
+    private var snapBackVelocity: CGFloat = 0
 
     /// Whether a section transition animation is in progress.
     private var isSectionAnimating: Bool = false
 
     /// Whether any animation is active (momentum or section transition).
     public var isAnimating: Bool {
-        displayLink != nil || isSectionAnimating
+        displayLink != nil || isSectionAnimating || progressDisplayLink != nil
     }
 
     /// Last momentum update timestamp.
     private var lastMomentumTime: CFTimeInterval = 0
 
+    // MARK: - Progress Animation State
+
+    /// Display link for animating scroll progress during snap-back.
+    private var progressDisplayLink: CADisplayLink?
+
+    /// Start time for progress animation.
+    private var progressAnimationStartTime: CFTimeInterval = 0
+
+    /// Starting progress value for animation.
+    private var progressAnimationStartValue: CGFloat = 0
+
+    /// Target progress value for animation.
+    private var progressAnimationEndValue: CGFloat = 0
+
+    /// Duration of progress animation.
+    private var progressAnimationDuration: CFTimeInterval = 0.3
+
     // MARK: - Callbacks
 
     /// Called when current section changes.
     public var onSectionChanged: ((Int) -> Void)?
+
+    /// Called during drag to report transition progress (0.0 = section 0, 1.0 = section 1+).
+    /// This enables scroll-driven animations like collapsing headers.
+    public var onScrollProgress: ((CGFloat) -> Void)?
 
     // MARK: - Views
 
@@ -357,6 +383,15 @@ extension DetentScrollViewController {
     private func handleDragBegan() {
         // Cancel any in-flight animations
         stopMomentum()
+        stopProgressAnimation()
+
+        // Cancel ALL UIView animations on the content container.
+        // This includes both section transition animations AND snap-back animations.
+        // Both animate contentContainerView.frame.origin.y, which conflicts with
+        // direct frame updates from drag handling and momentum. Without this,
+        // touching during any animation causes the UIView animation to fight with
+        // gesture/momentum updates, resulting in velocity jumps and jitter.
+        contentContainerView.layer.removeAllAnimations()
         isSectionAnimating = false
 
         isDragging = true
@@ -380,6 +415,32 @@ extension DetentScrollViewController {
 
         updateContentOffset()
         updateScrollBarFrame()
+        reportScrollProgress()
+    }
+
+    /// Reports scroll progress for scroll-driven animations.
+    /// Progress is 0.0 at section 0, 1.0 at section 1+, with smooth interpolation during drag.
+    private func reportScrollProgress() {
+        let threshold = configuration.threshold
+
+        let progress: CGFloat
+        if currentSection == 0 {
+            // At section 0: progress increases as user drags up (negative rawDragOffset)
+            if rawDragOffset < 0 {
+                progress = min(1.0, -rawDragOffset / threshold)
+            } else {
+                progress = 0.0
+            }
+        } else {
+            // At section 1+: progress decreases as user drags down (positive rawDragOffset)
+            if rawDragOffset > 0 {
+                progress = max(0.0, 1.0 - rawDragOffset / threshold)
+            } else {
+                progress = 1.0
+            }
+        }
+
+        onScrollProgress?(progress)
     }
 
     private func handleDragEnded(translation: CGFloat, velocity: CGFloat) {
@@ -499,6 +560,10 @@ extension DetentScrollViewController {
     private func animateToSection(_ section: Int, fromBottom: Bool, velocity: CGFloat = 0) {
         let newSection = max(0, min(section, sectionHeights.count - 1))
 
+        // Haptic feedback when crossing a detent
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
+
         isSectionAnimating = true
 
         // Calculate spring velocity relative to the distance we're animating
@@ -506,7 +571,19 @@ extension DetentScrollViewController {
         let targetOffset = sectionOffsets[newSection] - snapInset(for: newSection)
         let currentVisualOffset = currentSectionOffset - currentSnapInset + internalOffset
         let distance = abs(targetOffset - currentVisualOffset)
-        let springVelocity = distance > 0 ? abs(velocity) / distance : 0
+        // Clamp spring velocity to prevent insane speeds when distance is small.
+        // Without clamping, scrolling through a detent and back can produce
+        // springVelocity values of 50+ which causes massive visual jumps.
+        let rawSpringVelocity = distance > 0 ? abs(velocity) / distance : 0
+        let springVelocity = min(rawSpringVelocity, 3.0)
+
+        // Calculate current and target progress for smooth animation
+        let currentProgress = calculateCurrentProgress()
+        let targetProgress: CGFloat = newSection > 0 ? 1.0 : 0.0
+
+        // Start progress animation (longer duration to match section animation)
+        progressAnimationDuration = 0.4
+        startProgressAnimation(from: currentProgress, to: targetProgress)
 
         UIView.animate(
             withDuration: 0.4,
@@ -530,26 +607,98 @@ extension DetentScrollViewController {
             if self.currentSection == newSection {
                 self.isSectionAnimating = false
                 self.onSectionChanged?(newSection)
+                // Progress animation handles the final value
             }
             self.hideScrollBarAfterDelay()
         }
     }
 
     private func animateSnapBack(velocity: CGFloat = 0) {
-        // Calculate spring velocity relative to the snap distance
-        let distance = abs(rawDragOffset)
-        let springVelocity = distance > 0 ? abs(velocity) / distance : 0
+        // Calculate current and target progress for smooth animation
+        let currentProgress = calculateCurrentProgress()
+        let targetProgress: CGFloat = currentSection > 0 ? 1.0 : 0.0
 
-        UIView.animate(
-            withDuration: 0.3,
-            delay: 0,
-            usingSpringWithDamping: 0.9,
-            initialSpringVelocity: springVelocity,
-            options: [.allowUserInteraction]
-        ) {
-            self.rawDragOffset = 0
-            self.updateContentOffset()
+        // Start progress animation to smoothly interpolate from current to target
+        startProgressAnimation(from: currentProgress, to: targetProgress)
+
+        // If rawDragOffset is negligible, just zero it out
+        guard abs(rawDragOffset) > 1 else {
+            rawDragOffset = 0
+            return
         }
+
+        // Initialize snap-back spring velocity based on gesture velocity.
+        // The spring will pull rawDragOffset back to 0.
+        // Gesture velocity sign: positive = dragging down, negative = dragging up.
+        // rawDragOffset sign: positive = pulled toward previous section, negative = pulled toward next.
+        // We want the initial spring velocity to match the gesture direction.
+        snapBackVelocity = -velocity * 0.5  // Dampen initial velocity for smoother feel
+
+        // Ensure the display link is running to process the snap-back.
+        // If momentum is already active, it will handle both. If not, start it.
+        if displayLink == nil {
+            lastMomentumTime = CACurrentMediaTime()
+            displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
+            displayLink?.add(to: .main, forMode: .common)
+        }
+    }
+
+    /// Calculates the current scroll progress based on section and drag offset.
+    private func calculateCurrentProgress() -> CGFloat {
+        let threshold = configuration.threshold
+
+        if currentSection == 0 {
+            if rawDragOffset < 0 {
+                return min(1.0, -rawDragOffset / threshold)
+            } else {
+                return 0.0
+            }
+        } else {
+            if rawDragOffset > 0 {
+                return max(0.0, 1.0 - rawDragOffset / threshold)
+            } else {
+                return 1.0
+            }
+        }
+    }
+
+    /// Starts a smooth progress animation from one value to another.
+    private func startProgressAnimation(from startValue: CGFloat, to endValue: CGFloat) {
+        // Cancel any existing progress animation
+        stopProgressAnimation()
+
+        // Don't animate if values are the same
+        guard abs(startValue - endValue) > 0.001 else {
+            onScrollProgress?(endValue)
+            return
+        }
+
+        progressAnimationStartValue = startValue
+        progressAnimationEndValue = endValue
+        progressAnimationStartTime = CACurrentMediaTime()
+
+        progressDisplayLink = CADisplayLink(target: self, selector: #selector(updateProgressAnimation))
+        progressDisplayLink?.add(to: .main, forMode: .common)
+    }
+
+    @objc private func updateProgressAnimation() {
+        let elapsed = CACurrentMediaTime() - progressAnimationStartTime
+        let normalizedTime = min(1.0, elapsed / progressAnimationDuration)
+
+        // Use ease-out curve for natural deceleration
+        let easedTime = 1.0 - pow(1.0 - normalizedTime, 3.0)
+
+        let currentProgress = progressAnimationStartValue + (progressAnimationEndValue - progressAnimationStartValue) * CGFloat(easedTime)
+        onScrollProgress?(currentProgress)
+
+        if normalizedTime >= 1.0 {
+            stopProgressAnimation()
+        }
+    }
+
+    private func stopProgressAnimation() {
+        progressDisplayLink?.invalidate()
+        progressDisplayLink = nil
     }
 
     /// Programmatically scrolls to a section.
@@ -594,6 +743,13 @@ extension DetentScrollViewController {
         let bounceStiffness: CGFloat = 200
         let bounceDamping: CGFloat = 30
 
+        // Spring constants for rawDragOffset snap-back (slightly softer than bounce)
+        let snapBackStiffness: CGFloat = 180
+        let snapBackDamping: CGFloat = 25
+
+        // --- Update internalOffset momentum ---
+        var momentumComplete = false
+
         let isPastTop = internalOffset < 0
         let isPastBottom = internalOffset > maxInternalScroll
 
@@ -620,9 +776,10 @@ extension DetentScrollViewController {
 
             if reachedTop || reachedBottom {
                 internalOffset = boundary
-                stopMomentum()
+                momentumVelocity = 0
+                momentumComplete = true
             }
-        } else {
+        } else if abs(momentumVelocity) > 0 {
             // Normal friction-based momentum
             internalOffset = Physics.integrate(
                 position: internalOffset,
@@ -635,18 +792,58 @@ extension DetentScrollViewController {
             )
 
             if abs(momentumVelocity) < 1 {
-                stopMomentum()
+                momentumVelocity = 0
+                momentumComplete = true
             }
+        } else {
+            momentumComplete = true
         }
 
+        // --- Update rawDragOffset snap-back spring ---
+        var snapBackComplete = false
+
+        if abs(rawDragOffset) > 0.5 || abs(snapBackVelocity) > 1 {
+            // Apply spring physics to pull rawDragOffset back to 0
+            let force = Physics.springForce(
+                displacement: rawDragOffset,
+                velocity: snapBackVelocity,
+                stiffness: snapBackStiffness,
+                damping: snapBackDamping
+            )
+            snapBackVelocity += force * frameTime
+            rawDragOffset = Physics.integrate(
+                position: rawDragOffset,
+                velocity: snapBackVelocity,
+                deltaTime: frameTime
+            )
+
+            // Check if settled
+            if abs(rawDragOffset) < 0.5 && abs(snapBackVelocity) < 1 {
+                rawDragOffset = 0
+                snapBackVelocity = 0
+                snapBackComplete = true
+            }
+        } else {
+            rawDragOffset = 0
+            snapBackVelocity = 0
+            snapBackComplete = true
+        }
+
+        // --- Update visuals ---
         updateContentOffset()
         updateScrollBarFrame()
+
+        // --- Check if all animations are complete ---
+        if momentumComplete && snapBackComplete {
+            stopMomentum()
+        }
     }
 
     private func stopMomentum() {
         displayLink?.invalidate()
         displayLink = nil
         momentumVelocity = 0
+        snapBackVelocity = 0
 
         // Hide scroll bar when momentum stops, unless we're mid-drag.
         // The isDragging check prevents hiding when stopMomentum is called from
@@ -763,6 +960,14 @@ extension DetentScrollViewController: UIGestureRecognizerDelegate {
         if otherGestureRecognizer is UIPinchGestureRecognizer {
             return true
         }
+
+        // Allow pan gestures to work simultaneously with other pan gestures.
+        // This enables child views (like TimeStepper) to handle horizontal drags
+        // while we handle vertical drags. Each gesture filters by direction.
+        if otherGestureRecognizer is UIPanGestureRecognizer {
+            return true
+        }
+
         return false
     }
 }
