@@ -134,6 +134,9 @@ public class DetentScrollViewController: UIViewController {
     /// Pan gesture recognizer for scrolling.
     private var panGesture: UIPanGestureRecognizer!
 
+    /// Touch-down gesture to stop momentum immediately when finger contacts screen.
+    private var touchDownGesture: UILongPressGestureRecognizer!
+
     // MARK: - External Drag State
 
     /// Whether an external drag (injected from SwiftUI child) is active.
@@ -186,6 +189,14 @@ public class DetentScrollViewController: UIViewController {
         panGesture.delaysTouchesBegan = false
         panGesture.cancelsTouchesInView = false
         view.addGestureRecognizer(panGesture)
+
+        // Touch-down gesture fires immediately when finger touches screen.
+        // This stops momentum scrolling even before the pan gesture begins (which requires movement).
+        touchDownGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleTouchDown(_:)))
+        touchDownGesture.minimumPressDuration = 0
+        touchDownGesture.cancelsTouchesInView = false
+        touchDownGesture.delegate = self
+        view.addGestureRecognizer(touchDownGesture)
     }
 
     public override func viewDidLayoutSubviews() {
@@ -360,6 +371,18 @@ public class DetentScrollViewController: UIViewController {
 // MARK: - Gesture Handling
 
 extension DetentScrollViewController {
+
+    @objc private func handleTouchDown(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        guard !isScrollDisabled else { return }
+
+        // Stop momentum immediately when finger touches screen during scrolling.
+        // This provides the expected "catch" behavior where touching stops deceleration.
+        if displayLink != nil {
+            stopMomentum()
+            showScrollBar()
+        }
+    }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard !isScrollDisabled else { return }
@@ -1171,6 +1194,12 @@ extension DetentScrollViewController: UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        // Always allow our touch-down gesture to work with everything.
+        // It only stops momentum on touch and doesn't interfere with other gestures.
+        if gestureRecognizer === touchDownGesture || otherGestureRecognizer === touchDownGesture {
+            return true
+        }
+
         // Allow pinch gestures to work simultaneously
         if otherGestureRecognizer is UIPinchGestureRecognizer {
             return true
