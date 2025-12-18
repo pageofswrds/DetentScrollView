@@ -10,10 +10,13 @@ import SwiftUI
 
 // MARK: - Drag Injection Handler
 
-/// Handler for injecting vertical drag events into the DetentScrollView.
+/// Handler for injecting drag events and height updates into the DetentScrollView.
 ///
-/// Use this when a SwiftUI child view captures a gesture but wants to forward
-/// vertical movement to the parent scroll view.
+/// Access via `@Environment(\.detentScrollDragHandler)` in child views.
+///
+/// Use this when:
+/// - A SwiftUI child view captures a gesture but wants to forward vertical movement
+/// - You need to update section heights with specific anchor behavior (e.g., inserting content)
 public class DetentScrollDragHandler: ObservableObject {
     weak var controller: DetentScrollViewController?
 
@@ -31,6 +34,39 @@ public class DetentScrollDragHandler: ObservableObject {
     @MainActor
     public func injectDragEnd(velocity: CGFloat) {
         controller?.injectDragEnd(velocity: velocity)
+    }
+
+    /// Updates section heights with explicit anchor behavior.
+    ///
+    /// Use this when you need control over how scroll position is preserved during height changes.
+    /// For automatic height measurement (via DetentSection), use the default behavior which
+    /// anchors to section top.
+    ///
+    /// - Parameters:
+    ///   - heights: The new heights for each section.
+    ///   - anchor: How to preserve scroll position (default: `.sectionTop`).
+    ///   - animated: Whether to animate the layout update.
+    ///
+    /// ## Example: Inserting a card above current view
+    /// ```swift
+    /// @Environment(\.detentScrollDragHandler) var scrollHandler
+    ///
+    /// func insertCard() {
+    ///     cards.insert(newCard, at: 0)
+    ///     let newHeight = calculateSectionHeight()
+    ///     scrollHandler?.updateHeights(
+    ///         [section0Height, newHeight],
+    ///         anchor: .preserveVisibleContent(insertedAbove: newCard.height)
+    ///     )
+    /// }
+    /// ```
+    @MainActor
+    public func updateHeights(
+        _ heights: [CGFloat],
+        anchor: SectionHeightAnchor = .sectionTop,
+        animated: Bool = false
+    ) {
+        controller?.updateSectionHeights(heights, anchor: anchor, animated: animated)
     }
 }
 

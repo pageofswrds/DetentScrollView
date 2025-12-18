@@ -11,6 +11,21 @@ import SwiftUI
 import QuartzCore
 import Mercurial
 
+// MARK: - Section Height Anchor
+
+/// Specifies how scroll position should be preserved when section heights change.
+public enum SectionHeightAnchor {
+    /// Anchor to the top of the current section.
+    /// Content changes cause the view to grow/shrink downward.
+    /// Use for: tab switching, expanding/collapsing content in place.
+    case sectionTop
+
+    /// Preserve the currently visible content by adjusting for insertions/removals.
+    /// - Parameter insertedAbove: Height added (positive) or removed (negative) above the current scroll position.
+    /// Use for: adding/removing cards above current view, dynamic content loading.
+    case preserveVisibleContent(insertedAbove: CGFloat)
+}
+
 /// Core UIKit implementation of detent scrolling.
 ///
 /// This view controller hosts SwiftUI content via UIHostingController and handles
@@ -803,19 +818,42 @@ extension DetentScrollViewController {
         }
     }
 
-    /// Updates section heights while preserving scroll position.
+    /// Updates section heights with configurable scroll position anchoring.
     ///
     /// Use this method when section heights change dynamically (e.g., content was added/removed).
-    /// The method recalculates internal state to maintain the user's visual scroll position.
     ///
     /// - Parameters:
     ///   - newHeights: The new heights for each section.
+    ///   - anchor: How to preserve scroll position (default: `.sectionTop`).
     ///   - animated: Whether to animate the layout update (default: false).
-    public func updateSectionHeights(_ newHeights: [CGFloat], animated: Bool = false) {
+    ///
+    /// ## Anchor Modes
+    ///
+    /// - `.sectionTop`: The current section's top stays visually anchored. Content grows/shrinks
+    ///   downward. Use for tab switching, expanding/collapsing content in place.
+    ///
+    /// - `.preserveVisibleContent(insertedAbove:)`: Adjusts scroll position to keep the same
+    ///   content visible when content is inserted above. Pass the height of inserted content
+    ///   (positive) or removed content (negative).
+    ///
+    /// ## Example
+    /// ```swift
+    /// // Tab switching - anchor to top (default)
+    /// controller.updateSectionHeights(newHeights)
+    ///
+    /// // Card inserted above current view - preserve visible content
+    /// controller.updateSectionHeights(newHeights, anchor: .preserveVisibleContent(insertedAbove: cardHeight))
+    /// ```
+    public func updateSectionHeights(
+        _ newHeights: [CGFloat],
+        anchor: SectionHeightAnchor = .sectionTop,
+        animated: Bool = false
+    ) {
         guard newHeights != sectionHeights else { return }
 
-        // Capture current absolute position before changing heights
-        let currentAbsolutePosition = currentSectionOffset + internalOffset
+        // Capture the offset of the current section before changing heights
+        // This is the sum of all preceding section heights
+        let oldSectionOffset = currentSectionOffset
 
         // Apply new heights (this triggers updateSectionOffsets via didSet)
         sectionHeights = newHeights
@@ -832,13 +870,30 @@ extension DetentScrollViewController {
             currentSection = max(0, newHeights.count - 1)
         }
 
-        // Recalculate internalOffset to maintain visual position
-        // The section offset may have changed if preceding sections changed height
+        // Check if preceding sections changed (which shifts our section's start position)
         let newSectionOffset = currentSectionOffset
-        let positionDelta = newSectionOffset - currentAbsolutePosition
+        let precedingDelta = newSectionOffset - oldSectionOffset
 
-        // Adjust internalOffset to compensate, clamped to valid range
-        internalOffset = max(0, min(-positionDelta, maxInternalScroll))
+        // Always compensate for preceding section changes
+        if precedingDelta != 0 {
+            internalOffset -= precedingDelta
+        }
+
+        // Apply anchor-specific adjustments for current section changes
+        switch anchor {
+        case .sectionTop:
+            // No additional adjustment - section top stays anchored
+            break
+
+        case .preserveVisibleContent(let insertedAbove):
+            // Adjust scroll position by the amount of content inserted above
+            // Positive = content added above, scroll down to keep viewing same content
+            // Negative = content removed above, scroll up
+            internalOffset += insertedAbove
+        }
+
+        // Clamp internalOffset to valid range for the (possibly new) section height
+        internalOffset = max(0, min(internalOffset, maxInternalScroll))
 
         // Update display
         if animated {
