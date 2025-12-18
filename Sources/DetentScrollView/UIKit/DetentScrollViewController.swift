@@ -72,9 +72,18 @@ public class DetentScrollViewController: UIViewController {
     /// Whether a section transition animation is in progress.
     private var isSectionAnimating: Bool = false
 
+    /// Property animator for section transitions (supports interruption).
+    private var sectionAnimator: UIViewPropertyAnimator?
+
+    /// Start state for section transition (for interpolation on interruption).
+    private var sectionAnimationStartState: (section: Int, internalOffset: CGFloat, rawDragOffset: CGFloat, frameY: CGFloat)?
+
+    /// End state for section transition.
+    private var sectionAnimationEndState: (section: Int, internalOffset: CGFloat, frameY: CGFloat)?
+
     /// Whether any animation is active (momentum or section transition).
     public var isAnimating: Bool {
-        displayLink != nil || isSectionAnimating || progressDisplayLink != nil
+        displayLink != nil || isSectionAnimating || sectionAnimator?.isRunning == true || progressDisplayLink != nil
     }
 
     /// Last momentum update timestamp.
@@ -393,18 +402,43 @@ extension DetentScrollViewController {
         stopMomentum()
         stopProgressAnimation()
 
-        // SURGICAL FIX for animation interruption:
-        // Before removing UIView animations, capture the presentation layer's current
-        // position and set the frame to match. This prevents the visual "snap" that
-        // occurs when removeAllAnimations() causes the presentation layer to jump
-        // to the model layer's final values.
-        if isSectionAnimating {
-            if let presentationY = contentContainerView.layer.presentation()?.frame.origin.y {
-                contentContainerView.frame.origin.y = presentationY
-            }
+        // Handle UIViewPropertyAnimator interruption
+        if let animator = sectionAnimator, animator.isRunning,
+           let endState = sectionAnimationEndState {
+
+            // Stop the animator first
+            animator.stopAnimation(true)
+
+            // Get the ACTUAL visual position from the presentation layer
+            let actualFrameY = contentContainerView.layer.presentation()?.frame.origin.y
+                ?? contentContainerView.frame.origin.y
+
+            // User committed to target section by passing threshold and releasing.
+            // Always use target section, even if animation just started.
+            currentSection = endState.section
+
+            // Calculate internalOffset from actual frame position.
+            // DON'T CLAMP - allow negative values (past top) or values > maxInternalScroll (past bottom).
+            // The momentum system handles out-of-bounds values with spring physics.
+            let targetSectionOffset = sectionOffsets[currentSection]
+            let targetSnapInset = snapInset(for: currentSection)
+            internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
+
+            rawDragOffset = 0
+
+            // Set frame to match actual position (no visual jump)
+            contentContainerView.frame.origin.y = actualFrameY
+
+            // Notify binding that we're now in the target section
+            // This prevents updateUIViewController from snapping us back to the old section
+            onSectionChanged?(currentSection)
+
+            sectionAnimator = nil
+            sectionAnimationStartState = nil
+            sectionAnimationEndState = nil
         }
 
-        // Now remove animations - no visual jump because frame already matches presentation
+        // Clean up any remaining animation state
         contentContainerView.layer.removeAllAnimations()
         isSectionAnimating = false
 
@@ -578,18 +612,29 @@ extension DetentScrollViewController {
         let impact = UIImpactFeedbackGenerator(style: .medium)
         impact.impactOccurred()
 
+        // Cancel any existing section animator
+        sectionAnimator?.stopAnimation(true)
+        sectionAnimator = nil
+
         isSectionAnimating = true
 
-        // Calculate spring velocity relative to the distance we're animating
-        // UIKit's initialSpringVelocity is in "units per second / total distance"
-        let targetOffset = sectionOffsets[newSection] - snapInset(for: newSection)
-        let currentVisualOffset = currentSectionOffset - currentSnapInset + internalOffset
-        let distance = abs(targetOffset - currentVisualOffset)
-        // Clamp spring velocity to prevent insane speeds when distance is small.
-        // Without clamping, scrolling through a detent and back can produce
-        // springVelocity values of 50+ which causes massive visual jumps.
-        let rawSpringVelocity = distance > 0 ? abs(velocity) / distance : 0
-        let springVelocity = min(rawSpringVelocity, 3.0)
+        // Store start state for interpolation on interruption
+        let startFrameY = contentContainerView.frame.origin.y
+        sectionAnimationStartState = (
+            section: currentSection,
+            internalOffset: internalOffset,
+            rawDragOffset: rawDragOffset,
+            frameY: startFrameY
+        )
+
+        // Calculate end state
+        let endInternalOffset: CGFloat = fromBottom ? maxInternalScroll(for: newSection) : 0
+        let endFrameY = -sectionOffsets[newSection] + snapInset(for: newSection) - endInternalOffset
+        sectionAnimationEndState = (
+            section: newSection,
+            internalOffset: endInternalOffset,
+            frameY: endFrameY
+        )
 
         // Calculate current and target progress for smooth animation
         let currentProgress = calculateCurrentProgress()
@@ -599,36 +644,37 @@ extension DetentScrollViewController {
         progressAnimationDuration = 0.4
         startProgressAnimation(from: currentProgress, to: targetProgress)
 
-        UIView.animate(
-            withDuration: 0.4,
-            delay: 0,
-            usingSpringWithDamping: 0.8,
-            initialSpringVelocity: springVelocity,
-            options: [.allowUserInteraction]
-        ) {
+        // Create interruptible property animator
+        // Using spring timing for natural feel
+        let springTiming = UISpringTimingParameters(dampingRatio: 0.8)
+        let animator = UIViewPropertyAnimator(duration: 0.4, timingParameters: springTiming)
+
+        animator.addAnimations {
             self.currentSection = newSection
-            if fromBottom {
-                self.internalOffset = self.maxInternalScroll(for: newSection)
-            } else {
-                self.internalOffset = 0
-            }
+            self.internalOffset = endInternalOffset
             self.rawDragOffset = 0
             self.updateContentOffset()
             self.updateScrollBarFrame()
-        } completion: { finished in
-            // Only clear animation flag and notify if animation completed naturally.
-            // If animation was cancelled (finished = false), don't trigger callbacks
-            // as this can cause SwiftUI state updates mid-gesture that interfere
-            // with the current drag operation.
-            guard finished else { return }
+        }
+
+        animator.addCompletion { [weak self] position in
+            guard let self = self else { return }
+
+            // Only handle completion if animation finished normally
+            guard position == .end else { return }
 
             if self.currentSection == newSection {
                 self.isSectionAnimating = false
+                self.sectionAnimator = nil
+                self.sectionAnimationStartState = nil
+                self.sectionAnimationEndState = nil
                 self.onSectionChanged?(newSection)
-                // Progress animation handles the final value
             }
             self.hideScrollBarAfterDelay()
         }
+
+        sectionAnimator = animator
+        animator.startAnimation()
     }
 
     private func animateSnapBack(velocity: CGFloat = 0) {
@@ -755,13 +801,36 @@ extension DetentScrollViewController {
             stopMomentum()
             stopProgressAnimation()
 
-            // SURGICAL FIX for animation interruption (same as handleDragBegan):
-            // Capture presentation layer position before removing animations
-            if isSectionAnimating {
-                if let presentationY = contentContainerView.layer.presentation()?.frame.origin.y {
-                    contentContainerView.frame.origin.y = presentationY
-                }
+            // Handle UIViewPropertyAnimator interruption (same as handleDragBegan)
+            if let animator = sectionAnimator, animator.isRunning,
+               let endState = sectionAnimationEndState {
+
+                // Stop the animator first
+                animator.stopAnimation(true)
+
+                // Get actual visual position from presentation layer
+                let actualFrameY = contentContainerView.layer.presentation()?.frame.origin.y
+                    ?? contentContainerView.frame.origin.y
+
+                // User committed to target section - always use it
+                currentSection = endState.section
+
+                // Don't clamp internalOffset - allow out-of-bounds values
+                let targetSectionOffset = sectionOffsets[currentSection]
+                let targetSnapInset = snapInset(for: currentSection)
+                internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
+
+                rawDragOffset = 0
+                contentContainerView.frame.origin.y = actualFrameY
+
+                // Notify binding that we're now in the target section
+                onSectionChanged?(currentSection)
+
+                sectionAnimator = nil
+                sectionAnimationStartState = nil
+                sectionAnimationEndState = nil
             }
+
             contentContainerView.layer.removeAllAnimations()
             isSectionAnimating = false
 
