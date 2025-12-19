@@ -11,21 +11,6 @@ import SwiftUI
 import QuartzCore
 import Mercurial
 
-// MARK: - Section Height Anchor
-
-/// Specifies how scroll position should be preserved when section heights change.
-public enum SectionHeightAnchor {
-    /// Anchor to the top of the current section.
-    /// Content changes cause the view to grow/shrink downward.
-    /// Use for: tab switching, expanding/collapsing content in place.
-    case sectionTop
-
-    /// Preserve the currently visible content by adjusting for insertions/removals.
-    /// - Parameter insertedAbove: Height added (positive) or removed (negative) above the current scroll position.
-    /// Use for: adding/removing cards above current view, dynamic content loading.
-    case preserveVisibleContent(insertedAbove: CGFloat)
-}
-
 /// Core UIKit implementation of detent scrolling.
 ///
 /// This view controller hosts SwiftUI content via UIHostingController and handles
