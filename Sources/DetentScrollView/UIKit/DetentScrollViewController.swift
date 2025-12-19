@@ -104,6 +104,31 @@ public class DetentScrollViewController: UIViewController {
     /// Last momentum update timestamp.
     private var lastMomentumTime: CFTimeInterval = 0
 
+    // MARK: - Presentation Layer Helpers
+
+    /// Captures the actual visual Y position of the content container.
+    ///
+    /// During animations, the model layer (`frame`) holds the target value while the
+    /// presentation layer shows the actual on-screen position. This method safely
+    /// retrieves the presentation layer value with a fallback.
+    ///
+    /// - Parameter context: Description of why we're capturing (for debug logging).
+    /// - Returns: The current visual Y position of the content container.
+    private func captureActualFrameY(context: String) -> CGFloat {
+        if let presentationY = contentContainerView.layer.presentation()?.frame.origin.y {
+            return presentationY
+        }
+
+        // Presentation layer is nil - this can happen if:
+        // 1. No animation is in progress (expected in some edge cases)
+        // 2. The layer was deallocated (unexpected)
+        // Fall back to model layer value, which may cause a visual jump
+        #if DEBUG
+        print("⚠️ [\(context)] Presentation layer unavailable, using model layer")
+        #endif
+        return contentContainerView.frame.origin.y
+    }
+
     // MARK: - Debug Validation
 
     /// Validates that scroll state is internally consistent.
@@ -521,8 +546,7 @@ extension DetentScrollViewController {
             animator.stopAnimation(true)
 
             // Get the ACTUAL visual position from the presentation layer
-            let actualFrameY = contentContainerView.layer.presentation()?.frame.origin.y
-                ?? contentContainerView.frame.origin.y
+            let actualFrameY = captureActualFrameY(context: "handleDragBegan interruption")
 
             // User committed to target section by passing threshold and releasing.
             // Always use target section, even if animation just started.
@@ -1012,8 +1036,7 @@ extension DetentScrollViewController {
                 animator.stopAnimation(true)
 
                 // Get actual visual position from presentation layer
-                let actualFrameY = contentContainerView.layer.presentation()?.frame.origin.y
-                    ?? contentContainerView.frame.origin.y
+                let actualFrameY = captureActualFrameY(context: "injectDrag interruption")
 
                 // User committed to target section - always use it
                 currentSection = endState.section
