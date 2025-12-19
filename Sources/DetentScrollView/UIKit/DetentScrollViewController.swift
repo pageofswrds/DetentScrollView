@@ -42,9 +42,21 @@ public class DetentScrollViewController: UIViewController {
     public private(set) var currentSection: Int = 0
 
     /// Internal scroll offset within the current section.
+    ///
+    /// **Important Contract:** This value may temporarily be negative or exceed `maxInternalScroll`
+    /// during animation interruptions. The momentum system's spring physics (`updateMomentum`)
+    /// handles out-of-bounds values by applying bounce-back forces. Do not add clamping here
+    /// without updating the momentum system to match.
+    ///
+    /// Valid range when at rest: `0...maxInternalScroll`
+    /// Valid range during animation/interruption: unbounded (spring physics will settle it)
     private var internalOffset: CGFloat = 0
 
     /// Raw drag offset (before rubber-band is applied).
+    ///
+    /// Positive = dragging toward previous section, negative = dragging toward next section.
+    /// This value is used to determine section transitions and calculate scroll progress.
+    /// The momentum system's snap-back spring pulls this back to 0 when released.
     private var rawDragOffset: CGFloat = 0
 
     /// Whether a drag gesture is currently active.
@@ -89,6 +101,104 @@ public class DetentScrollViewController: UIViewController {
     /// Last momentum update timestamp.
     private var lastMomentumTime: CFTimeInterval = 0
 
+    // MARK: - Presentation Layer Helpers
+
+    /// Captures the actual visual Y position of the content container.
+    ///
+    /// During animations, the model layer (`frame`) holds the target value while the
+    /// presentation layer shows the actual on-screen position. This method safely
+    /// retrieves the presentation layer value with a fallback.
+    ///
+    /// - Parameter context: Description of why we're capturing (for debug logging).
+    /// - Returns: The current visual Y position of the content container.
+    private func captureActualFrameY(context: String) -> CGFloat {
+        if let presentationY = contentContainerView.layer.presentation()?.frame.origin.y {
+            return presentationY
+        }
+
+        // Presentation layer is nil - this can happen if:
+        // 1. No animation is in progress (expected in some edge cases)
+        // 2. The layer was deallocated (unexpected)
+        // Fall back to model layer value, which may cause a visual jump
+        #if DEBUG
+        print("⚠️ [\(context)] Presentation layer unavailable, using model layer")
+        #endif
+        return contentContainerView.frame.origin.y
+    }
+
+    // MARK: - Debug Validation
+
+    /// Validates that scroll state is internally consistent.
+    /// Called at key points in debug builds to catch state desync bugs early.
+    ///
+    /// Note: Only validates "soft" invariants - conditions that should hold when truly at rest.
+    /// Transient violations during animations or interruptions are expected.
+    private func validateScrollState(context: String) {
+        #if DEBUG
+        // Validate section is in bounds - this should always hold
+        if currentSection < 0 || currentSection >= max(1, sectionHeights.count) {
+            assertionFailure("[\(context)] currentSection \(currentSection) out of bounds (count: \(sectionHeights.count))")
+        }
+
+        // Only validate offset bounds when truly at rest (no animations, no dragging)
+        // Skip validation if maxInternalScroll is 0 (section fits in viewport) since
+        // small offsets can occur during view layout transitions
+        let atRest = !isDragging && !isAnimating && displayLink == nil
+        if atRest && maxInternalScroll > 0 {
+            // Use generous tolerance - we're just catching major bugs, not floating point precision
+            let tolerance: CGFloat = 20
+            if internalOffset < -tolerance || internalOffset > maxInternalScroll + tolerance {
+                assertionFailure("[\(context)] internalOffset \(internalOffset) significantly out of bounds [0, \(maxInternalScroll)]")
+            }
+            if abs(rawDragOffset) > tolerance {
+                assertionFailure("[\(context)] rawDragOffset \(rawDragOffset) should be ~0 when at rest")
+            }
+        }
+        #endif
+    }
+
+    // MARK: - Display Link Management
+
+    /// Ensures the momentum display link is running.
+    /// Safe to call multiple times - will not create duplicates.
+    private func ensureMomentumDisplayLinkRunning() {
+        guard displayLink == nil else {
+            // Display link already running - this is expected when both
+            // momentum and snap-back need the same loop
+            return
+        }
+
+        lastMomentumTime = CACurrentMediaTime()
+        displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
+        displayLink?.add(to: .main, forMode: .common)
+    }
+
+    /// Ensures the progress display link is running.
+    /// Safe to call multiple times - will not create duplicates.
+    private func ensureProgressDisplayLinkRunning() {
+        guard progressDisplayLink == nil else {
+            assertionFailure("Progress display link already running - this indicates a bug in animation lifecycle")
+            return
+        }
+
+        progressDisplayLink = CADisplayLink(target: self, selector: #selector(updateProgressAnimation))
+        progressDisplayLink?.add(to: .main, forMode: .common)
+    }
+
+    /// Stops all animations and cleans up display links.
+    /// Call this when the view is disappearing or being deallocated.
+    private func stopAllAnimations() {
+        stopMomentum()
+        stopProgressAnimation()
+
+        // Also stop any property animators
+        sectionAnimator?.stopAnimation(true)
+        sectionAnimator = nil
+        isSectionAnimating = false
+        sectionAnimationStartState = nil
+        sectionAnimationEndState = nil
+    }
+
     // MARK: - Progress Animation State
 
     /// Display link for animating scroll progress during snap-back.
@@ -126,13 +236,34 @@ public class DetentScrollViewController: UIViewController {
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
 
-    /// Task for hiding scroll bar after delay.
-    private var scrollBarHideTask: Task<Void, Never>?
+    /// Scroll bar visibility state machine.
+    ///
+    /// States:
+    /// - `hidden`: Scroll bar is not visible (alpha = 0)
+    /// - `visible`: Scroll bar is visible during active interaction
+    /// - `hiding(Task)`: Waiting to hide after delay, task can be cancelled
+    ///
+    /// Transitions:
+    /// - `hidden` → `visible`: User starts scrolling (showScrollBar)
+    /// - `visible` → `hiding`: Scroll interaction ends (scheduleScrollBarHide)
+    /// - `hiding` → `hidden`: Delay completes without cancellation
+    /// - `hiding` → `visible`: New scroll interaction starts (showScrollBar)
+    private enum ScrollBarState {
+        case hidden
+        case visible
+        case hiding(Task<Void, Never>)
+    }
+
+    /// Current scroll bar state.
+    private var scrollBarState: ScrollBarState = .hidden
 
     // MARK: - Gestures
 
     /// Pan gesture recognizer for scrolling.
     private var panGesture: UIPanGestureRecognizer!
+
+    /// Touch-down gesture to stop momentum immediately when finger contacts screen.
+    private var touchDownGesture: UILongPressGestureRecognizer!
 
     // MARK: - External Drag State
 
@@ -154,11 +285,9 @@ public class DetentScrollViewController: UIViewController {
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        // Clean up scroll bar state when view disappears (e.g., switching tabs)
-        scrollBarHideTask?.cancel()
-        scrollBarHideTask = nil
-        scrollBarView.alpha = 0
-        stopMomentum()
+        // Clean up all animation state when view disappears (e.g., switching tabs)
+        hideScrollBarImmediately()
+        stopAllAnimations()
     }
 
     // MARK: - Setup
@@ -186,6 +315,14 @@ public class DetentScrollViewController: UIViewController {
         panGesture.delaysTouchesBegan = false
         panGesture.cancelsTouchesInView = false
         view.addGestureRecognizer(panGesture)
+
+        // Touch-down gesture fires immediately when finger touches screen.
+        // This stops momentum scrolling even before the pan gesture begins (which requires movement).
+        touchDownGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleTouchDown(_:)))
+        touchDownGesture.minimumPressDuration = 0
+        touchDownGesture.cancelsTouchesInView = false
+        touchDownGesture.delegate = self
+        view.addGestureRecognizer(touchDownGesture)
     }
 
     public override func viewDidLayoutSubviews() {
@@ -361,6 +498,18 @@ public class DetentScrollViewController: UIViewController {
 
 extension DetentScrollViewController {
 
+    @objc private func handleTouchDown(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        guard !isScrollDisabled else { return }
+
+        // Stop momentum immediately when finger touches screen during scrolling.
+        // This provides the expected "catch" behavior where touching stops deceleration.
+        if displayLink != nil {
+            stopMomentum()
+            showScrollBar()
+        }
+    }
+
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard !isScrollDisabled else { return }
 
@@ -410,16 +559,15 @@ extension DetentScrollViewController {
             animator.stopAnimation(true)
 
             // Get the ACTUAL visual position from the presentation layer
-            let actualFrameY = contentContainerView.layer.presentation()?.frame.origin.y
-                ?? contentContainerView.frame.origin.y
+            let actualFrameY = captureActualFrameY(context: "handleDragBegan interruption")
 
             // User committed to target section by passing threshold and releasing.
             // Always use target section, even if animation just started.
             currentSection = endState.section
 
             // Calculate internalOffset from actual frame position.
-            // DON'T CLAMP - allow negative values (past top) or values > maxInternalScroll (past bottom).
-            // The momentum system handles out-of-bounds values with spring physics.
+            // Allow out-of-bounds values - see internalOffset documentation for the contract.
+            // The momentum system's spring physics will settle this to valid bounds.
             let targetSectionOffset = sectionOffsets[currentSection]
             let targetSnapInset = snapInset(for: currentSection)
             internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
@@ -432,6 +580,10 @@ extension DetentScrollViewController {
             // Notify binding that we're now in the target section
             // This prevents updateUIViewController from snapping us back to the old section
             onSectionChanged?(currentSection)
+
+            // Report correct progress after interruption to prevent stale values.
+            // Since we've committed to the target section, progress should reflect that.
+            onScrollProgress?(currentSection > 0 ? 1.0 : 0.0)
 
             sectionAnimator = nil
             sectionAnimationStartState = nil
@@ -520,22 +672,17 @@ extension DetentScrollViewController {
         isDragging = false
         lastPanTranslation = 0
 
-        // Always schedule scroll bar hide when drag ends.
-        //
-        // Why unconditional: There are multiple code paths that should hide the scroll bar
-        // (stopMomentum, animateToSection completion, etc.), but edge cases at scroll
-        // boundaries - particularly at the bottom of the last section - can cause the
-        // hide to not trigger. Rather than chase down every edge case, we always schedule
-        // a hide here as a safeguard. The hide task self-deduplicates (calling it multiple
-        // times just resets the 1-second timer), so there's no harm in redundant calls.
-        hideScrollBarAfterDelay()
+        // Schedule scroll bar hide - the state machine handles deduplication,
+        // so this safely works alongside other hide calls in stopMomentum and
+        // animateToSection completion.
+        scheduleScrollBarHide()
     }
 
     private func handleDragCancelled() {
         isDragging = false
         lastPanTranslation = 0
         animateSnapBack(velocity: 0)
-        hideScrollBarAfterDelay()
+        scheduleScrollBarHide()
     }
 
     // MARK: - Scroll Application
@@ -669,8 +816,9 @@ extension DetentScrollViewController {
                 self.sectionAnimationStartState = nil
                 self.sectionAnimationEndState = nil
                 self.onSectionChanged?(newSection)
+                self.validateScrollState(context: "sectionAnimationComplete")
             }
-            self.hideScrollBarAfterDelay()
+            self.scheduleScrollBarHide()
         }
 
         sectionAnimator = animator
@@ -700,11 +848,7 @@ extension DetentScrollViewController {
 
         // Ensure the display link is running to process the snap-back.
         // If momentum is already active, it will handle both. If not, start it.
-        if displayLink == nil {
-            lastMomentumTime = CACurrentMediaTime()
-            displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
-            displayLink?.add(to: .main, forMode: .common)
-        }
+        ensureMomentumDisplayLinkRunning()
     }
 
     /// Calculates the current scroll progress based on section and drag offset.
@@ -741,8 +885,7 @@ extension DetentScrollViewController {
         progressAnimationEndValue = endValue
         progressAnimationStartTime = CACurrentMediaTime()
 
-        progressDisplayLink = CADisplayLink(target: self, selector: #selector(updateProgressAnimation))
-        progressDisplayLink?.add(to: .main, forMode: .common)
+        ensureProgressDisplayLinkRunning()
     }
 
     @objc private func updateProgressAnimation() {
@@ -780,19 +923,42 @@ extension DetentScrollViewController {
         }
     }
 
-    /// Updates section heights while preserving scroll position.
+    /// Updates section heights with configurable scroll position anchoring.
     ///
     /// Use this method when section heights change dynamically (e.g., content was added/removed).
-    /// The method recalculates internal state to maintain the user's visual scroll position.
     ///
     /// - Parameters:
     ///   - newHeights: The new heights for each section.
+    ///   - anchor: How to preserve scroll position (default: `.sectionTop`).
     ///   - animated: Whether to animate the layout update (default: false).
-    public func updateSectionHeights(_ newHeights: [CGFloat], animated: Bool = false) {
+    ///
+    /// ## Anchor Modes
+    ///
+    /// - `.sectionTop`: The current section's top stays visually anchored. Content grows/shrinks
+    ///   downward. Use for tab switching, expanding/collapsing content in place.
+    ///
+    /// - `.preserveVisibleContent(insertedAbove:)`: Adjusts scroll position to keep the same
+    ///   content visible when content is inserted above. Pass the height of inserted content
+    ///   (positive) or removed content (negative).
+    ///
+    /// ## Example
+    /// ```swift
+    /// // Tab switching - anchor to top (default)
+    /// controller.updateSectionHeights(newHeights)
+    ///
+    /// // Card inserted above current view - preserve visible content
+    /// controller.updateSectionHeights(newHeights, anchor: .preserveVisibleContent(insertedAbove: cardHeight))
+    /// ```
+    public func updateSectionHeights(
+        _ newHeights: [CGFloat],
+        anchor: SectionHeightAnchor = .sectionTop,
+        animated: Bool = false
+    ) {
         guard newHeights != sectionHeights else { return }
 
-        // Capture current absolute position before changing heights
-        let currentAbsolutePosition = currentSectionOffset + internalOffset
+        // Capture the offset of the current section before changing heights
+        // This is the sum of all preceding section heights
+        let oldSectionOffset = currentSectionOffset
 
         // Apply new heights (this triggers updateSectionOffsets via didSet)
         sectionHeights = newHeights
@@ -809,13 +975,30 @@ extension DetentScrollViewController {
             currentSection = max(0, newHeights.count - 1)
         }
 
-        // Recalculate internalOffset to maintain visual position
-        // The section offset may have changed if preceding sections changed height
+        // Check if preceding sections changed (which shifts our section's start position)
         let newSectionOffset = currentSectionOffset
-        let positionDelta = newSectionOffset - currentAbsolutePosition
+        let precedingDelta = newSectionOffset - oldSectionOffset
 
-        // Adjust internalOffset to compensate, clamped to valid range
-        internalOffset = max(0, min(-positionDelta, maxInternalScroll))
+        // Always compensate for preceding section changes
+        if precedingDelta != 0 {
+            internalOffset -= precedingDelta
+        }
+
+        // Apply anchor-specific adjustments for current section changes
+        switch anchor {
+        case .sectionTop:
+            // No additional adjustment - section top stays anchored
+            break
+
+        case .preserveVisibleContent(let insertedAbove):
+            // Adjust scroll position by the amount of content inserted above
+            // Positive = content added above, scroll down to keep viewing same content
+            // Negative = content removed above, scroll up
+            internalOffset += insertedAbove
+        }
+
+        // Clamp internalOffset to valid range for the (possibly new) section height
+        internalOffset = max(0, min(internalOffset, maxInternalScroll))
 
         // Update display
         if animated {
@@ -861,13 +1044,13 @@ extension DetentScrollViewController {
                 animator.stopAnimation(true)
 
                 // Get actual visual position from presentation layer
-                let actualFrameY = contentContainerView.layer.presentation()?.frame.origin.y
-                    ?? contentContainerView.frame.origin.y
+                let actualFrameY = captureActualFrameY(context: "injectDrag interruption")
 
                 // User committed to target section - always use it
                 currentSection = endState.section
 
-                // Don't clamp internalOffset - allow out-of-bounds values
+                // Calculate internalOffset from actual frame position.
+                // Allow out-of-bounds values - see internalOffset documentation for the contract.
                 let targetSectionOffset = sectionOffsets[currentSection]
                 let targetSnapInset = snapInset(for: currentSection)
                 internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
@@ -877,6 +1060,10 @@ extension DetentScrollViewController {
 
                 // Notify binding that we're now in the target section
                 onSectionChanged?(currentSection)
+
+                // Report correct progress after interruption to prevent stale values.
+                // Since we've committed to the target section, progress should reflect that.
+                onScrollProgress?(currentSection > 0 ? 1.0 : 0.0)
 
                 sectionAnimator = nil
                 sectionAnimationStartState = nil
@@ -931,14 +1118,10 @@ extension DetentScrollViewController {
         // Flip sign: positive velocity = content moves up = offset increases
         momentumVelocity = -velocity
 
-        // Only create display link if one doesn't already exist.
-        // animateSnapBack may have already started one for the same updateMomentum loop.
-        // Creating a duplicate link causes double-speed momentum (the acceleration bug).
-        if displayLink == nil {
-            lastMomentumTime = CACurrentMediaTime()
-            displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
-            displayLink?.add(to: .main, forMode: .common)
-        }
+        // Ensure display link is running for momentum animation.
+        // animateSnapBack may have already started one for the same updateMomentum loop,
+        // which is fine - ensureMomentumDisplayLinkRunning handles that safely.
+        ensureMomentumDisplayLinkRunning()
     }
 
     @objc private func updateMomentum() {
@@ -1064,8 +1247,11 @@ extension DetentScrollViewController {
         // The isDragging check prevents hiding when stopMomentum is called from
         // handleDragBegan (which cancels any existing momentum before showing the bar).
         if !isDragging {
-            hideScrollBarAfterDelay()
+            scheduleScrollBarHide()
         }
+        // Note: We intentionally don't validate state here because stopMomentum can be
+        // called when interrupting animations (e.g., user touches during momentum),
+        // which leaves state temporarily out of bounds until the next gesture settles it.
     }
 
     /// Stops any active momentum animation.
@@ -1125,27 +1311,53 @@ extension DetentScrollViewController {
         )
     }
 
+    /// Shows the scroll bar immediately.
+    /// Cancels any pending hide and transitions to `visible` state.
     private func showScrollBar() {
-        scrollBarHideTask?.cancel()
-        scrollBarHideTask = nil
+        // Cancel any pending hide task
+        if case .hiding(let task) = scrollBarState {
+            task.cancel()
+        }
+
+        scrollBarState = .visible
 
         UIView.animate(withDuration: 0.15) {
             self.scrollBarView.alpha = 1
         }
     }
 
-    private func hideScrollBarAfterDelay() {
-        scrollBarHideTask?.cancel()
-        scrollBarHideTask = Task {
+    /// Schedules the scroll bar to hide after a delay.
+    /// Safe to call multiple times - resets the timer each time.
+    private func scheduleScrollBarHide() {
+        // Cancel any existing hide task
+        if case .hiding(let task) = scrollBarState {
+            task.cancel()
+        }
+
+        let hideTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             if !Task.isCancelled {
                 await MainActor.run {
+                    self.scrollBarState = .hidden
                     UIView.animate(withDuration: 0.3) {
                         self.scrollBarView.alpha = 0
                     }
                 }
             }
         }
+
+        scrollBarState = .hiding(hideTask)
+    }
+
+    /// Hides the scroll bar immediately without delay.
+    /// Used for cleanup (e.g., view disappearing).
+    private func hideScrollBarImmediately() {
+        if case .hiding(let task) = scrollBarState {
+            task.cancel()
+        }
+
+        scrollBarState = .hidden
+        scrollBarView.alpha = 0
     }
 }
 
@@ -1171,6 +1383,12 @@ extension DetentScrollViewController: UIGestureRecognizerDelegate {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        // Always allow our touch-down gesture to work with everything.
+        // It only stops momentum on touch and doesn't interfere with other gestures.
+        if gestureRecognizer === touchDownGesture || otherGestureRecognizer === touchDownGesture {
+            return true
+        }
+
         // Allow pinch gestures to work simultaneously
         if otherGestureRecognizer is UIPinchGestureRecognizer {
             return true
