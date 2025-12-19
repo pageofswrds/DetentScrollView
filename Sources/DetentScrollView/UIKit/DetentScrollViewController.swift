@@ -104,6 +104,48 @@ public class DetentScrollViewController: UIViewController {
     /// Last momentum update timestamp.
     private var lastMomentumTime: CFTimeInterval = 0
 
+    // MARK: - Display Link Management
+
+    /// Ensures the momentum display link is running.
+    /// Safe to call multiple times - will not create duplicates.
+    private func ensureMomentumDisplayLinkRunning() {
+        guard displayLink == nil else {
+            // Display link already running - this is expected when both
+            // momentum and snap-back need the same loop
+            return
+        }
+
+        lastMomentumTime = CACurrentMediaTime()
+        displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
+        displayLink?.add(to: .main, forMode: .common)
+    }
+
+    /// Ensures the progress display link is running.
+    /// Safe to call multiple times - will not create duplicates.
+    private func ensureProgressDisplayLinkRunning() {
+        guard progressDisplayLink == nil else {
+            assertionFailure("Progress display link already running - this indicates a bug in animation lifecycle")
+            return
+        }
+
+        progressDisplayLink = CADisplayLink(target: self, selector: #selector(updateProgressAnimation))
+        progressDisplayLink?.add(to: .main, forMode: .common)
+    }
+
+    /// Stops all animations and cleans up display links.
+    /// Call this when the view is disappearing or being deallocated.
+    private func stopAllAnimations() {
+        stopMomentum()
+        stopProgressAnimation()
+
+        // Also stop any property animators
+        sectionAnimator?.stopAnimation(true)
+        sectionAnimator = nil
+        isSectionAnimating = false
+        sectionAnimationStartState = nil
+        sectionAnimationEndState = nil
+    }
+
     // MARK: - Progress Animation State
 
     /// Display link for animating scroll progress during snap-back.
@@ -172,11 +214,11 @@ public class DetentScrollViewController: UIViewController {
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
-        // Clean up scroll bar state when view disappears (e.g., switching tabs)
+        // Clean up all animation state when view disappears (e.g., switching tabs)
         scrollBarHideTask?.cancel()
         scrollBarHideTask = nil
         scrollBarView.alpha = 0
-        stopMomentum()
+        stopAllAnimations()
     }
 
     // MARK: - Setup
@@ -738,11 +780,7 @@ extension DetentScrollViewController {
 
         // Ensure the display link is running to process the snap-back.
         // If momentum is already active, it will handle both. If not, start it.
-        if displayLink == nil {
-            lastMomentumTime = CACurrentMediaTime()
-            displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
-            displayLink?.add(to: .main, forMode: .common)
-        }
+        ensureMomentumDisplayLinkRunning()
     }
 
     /// Calculates the current scroll progress based on section and drag offset.
@@ -779,8 +817,7 @@ extension DetentScrollViewController {
         progressAnimationEndValue = endValue
         progressAnimationStartTime = CACurrentMediaTime()
 
-        progressDisplayLink = CADisplayLink(target: self, selector: #selector(updateProgressAnimation))
-        progressDisplayLink?.add(to: .main, forMode: .common)
+        ensureProgressDisplayLinkRunning()
     }
 
     @objc private func updateProgressAnimation() {
@@ -1009,14 +1046,10 @@ extension DetentScrollViewController {
         // Flip sign: positive velocity = content moves up = offset increases
         momentumVelocity = -velocity
 
-        // Only create display link if one doesn't already exist.
-        // animateSnapBack may have already started one for the same updateMomentum loop.
-        // Creating a duplicate link causes double-speed momentum (the acceleration bug).
-        if displayLink == nil {
-            lastMomentumTime = CACurrentMediaTime()
-            displayLink = CADisplayLink(target: self, selector: #selector(updateMomentum))
-            displayLink?.add(to: .main, forMode: .common)
-        }
+        // Ensure display link is running for momentum animation.
+        // animateSnapBack may have already started one for the same updateMomentum loop,
+        // which is fine - ensureMomentumDisplayLinkRunning handles that safely.
+        ensureMomentumDisplayLinkRunning()
     }
 
     @objc private func updateMomentum() {
