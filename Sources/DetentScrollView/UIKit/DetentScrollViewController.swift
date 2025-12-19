@@ -57,9 +57,21 @@ public class DetentScrollViewController: UIViewController {
     public private(set) var currentSection: Int = 0
 
     /// Internal scroll offset within the current section.
+    ///
+    /// **Important Contract:** This value may temporarily be negative or exceed `maxInternalScroll`
+    /// during animation interruptions. The momentum system's spring physics (`updateMomentum`)
+    /// handles out-of-bounds values by applying bounce-back forces. Do not add clamping here
+    /// without updating the momentum system to match.
+    ///
+    /// Valid range when at rest: `0...maxInternalScroll`
+    /// Valid range during animation/interruption: unbounded (spring physics will settle it)
     private var internalOffset: CGFloat = 0
 
     /// Raw drag offset (before rubber-band is applied).
+    ///
+    /// Positive = dragging toward previous section, negative = dragging toward next section.
+    /// This value is used to determine section transitions and calculate scroll progress.
+    /// The momentum system's snap-back spring pulls this back to 0 when released.
     private var rawDragOffset: CGFloat = 0
 
     /// Whether a drag gesture is currently active.
@@ -553,8 +565,8 @@ extension DetentScrollViewController {
             currentSection = endState.section
 
             // Calculate internalOffset from actual frame position.
-            // DON'T CLAMP - allow negative values (past top) or values > maxInternalScroll (past bottom).
-            // The momentum system handles out-of-bounds values with spring physics.
+            // Allow out-of-bounds values - see internalOffset documentation for the contract.
+            // The momentum system's spring physics will settle this to valid bounds.
             let targetSectionOffset = sectionOffsets[currentSection]
             let targetSnapInset = snapInset(for: currentSection)
             internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
@@ -1041,7 +1053,8 @@ extension DetentScrollViewController {
                 // User committed to target section - always use it
                 currentSection = endState.section
 
-                // Don't clamp internalOffset - allow out-of-bounds values
+                // Calculate internalOffset from actual frame position.
+                // Allow out-of-bounds values - see internalOffset documentation for the contract.
                 let targetSectionOffset = sectionOffsets[currentSection]
                 let targetSnapInset = snapInset(for: currentSection)
                 internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
