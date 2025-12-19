@@ -104,6 +104,37 @@ public class DetentScrollViewController: UIViewController {
     /// Last momentum update timestamp.
     private var lastMomentumTime: CFTimeInterval = 0
 
+    // MARK: - Debug Validation
+
+    /// Validates that scroll state is internally consistent.
+    /// Called at key points in debug builds to catch state desync bugs early.
+    ///
+    /// Note: Only validates "soft" invariants - conditions that should hold when truly at rest.
+    /// Transient violations during animations or interruptions are expected.
+    private func validateScrollState(context: String) {
+        #if DEBUG
+        // Validate section is in bounds - this should always hold
+        if currentSection < 0 || currentSection >= max(1, sectionHeights.count) {
+            assertionFailure("[\(context)] currentSection \(currentSection) out of bounds (count: \(sectionHeights.count))")
+        }
+
+        // Only validate offset bounds when truly at rest (no animations, no dragging)
+        // Skip validation if maxInternalScroll is 0 (section fits in viewport) since
+        // small offsets can occur during view layout transitions
+        let atRest = !isDragging && !isAnimating && displayLink == nil
+        if atRest && maxInternalScroll > 0 {
+            // Use generous tolerance - we're just catching major bugs, not floating point precision
+            let tolerance: CGFloat = 20
+            if internalOffset < -tolerance || internalOffset > maxInternalScroll + tolerance {
+                assertionFailure("[\(context)] internalOffset \(internalOffset) significantly out of bounds [0, \(maxInternalScroll)]")
+            }
+            if abs(rawDragOffset) > tolerance {
+                assertionFailure("[\(context)] rawDragOffset \(rawDragOffset) should be ~0 when at rest")
+            }
+        }
+        #endif
+    }
+
     // MARK: - Display Link Management
 
     /// Ensures the momentum display link is running.
@@ -513,6 +544,10 @@ extension DetentScrollViewController {
             // This prevents updateUIViewController from snapping us back to the old section
             onSectionChanged?(currentSection)
 
+            // Report correct progress after interruption to prevent stale values.
+            // Since we've committed to the target section, progress should reflect that.
+            onScrollProgress?(currentSection > 0 ? 1.0 : 0.0)
+
             sectionAnimator = nil
             sectionAnimationStartState = nil
             sectionAnimationEndState = nil
@@ -749,6 +784,7 @@ extension DetentScrollViewController {
                 self.sectionAnimationStartState = nil
                 self.sectionAnimationEndState = nil
                 self.onSectionChanged?(newSection)
+                self.validateScrollState(context: "sectionAnimationComplete")
             }
             self.hideScrollBarAfterDelay()
         }
@@ -993,6 +1029,10 @@ extension DetentScrollViewController {
                 // Notify binding that we're now in the target section
                 onSectionChanged?(currentSection)
 
+                // Report correct progress after interruption to prevent stale values.
+                // Since we've committed to the target section, progress should reflect that.
+                onScrollProgress?(currentSection > 0 ? 1.0 : 0.0)
+
                 sectionAnimator = nil
                 sectionAnimationStartState = nil
                 sectionAnimationEndState = nil
@@ -1177,6 +1217,9 @@ extension DetentScrollViewController {
         if !isDragging {
             hideScrollBarAfterDelay()
         }
+        // Note: We intentionally don't validate state here because stopMomentum can be
+        // called when interrupting animations (e.g., user touches during momentum),
+        // which leaves state temporarily out of bounds until the next gesture settles it.
     }
 
     /// Stops any active momentum animation.
