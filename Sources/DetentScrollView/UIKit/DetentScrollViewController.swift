@@ -251,8 +251,26 @@ public class DetentScrollViewController: UIViewController {
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
 
-    /// Task for hiding scroll bar after delay.
-    private var scrollBarHideTask: Task<Void, Never>?
+    /// Scroll bar visibility state machine.
+    ///
+    /// States:
+    /// - `hidden`: Scroll bar is not visible (alpha = 0)
+    /// - `visible`: Scroll bar is visible during active interaction
+    /// - `hiding(Task)`: Waiting to hide after delay, task can be cancelled
+    ///
+    /// Transitions:
+    /// - `hidden` → `visible`: User starts scrolling (showScrollBar)
+    /// - `visible` → `hiding`: Scroll interaction ends (scheduleScrollBarHide)
+    /// - `hiding` → `hidden`: Delay completes without cancellation
+    /// - `hiding` → `visible`: New scroll interaction starts (showScrollBar)
+    private enum ScrollBarState {
+        case hidden
+        case visible
+        case hiding(Task<Void, Never>)
+    }
+
+    /// Current scroll bar state.
+    private var scrollBarState: ScrollBarState = .hidden
 
     // MARK: - Gestures
 
@@ -283,9 +301,7 @@ public class DetentScrollViewController: UIViewController {
         super.viewWillDisappear(animated)
 
         // Clean up all animation state when view disappears (e.g., switching tabs)
-        scrollBarHideTask?.cancel()
-        scrollBarHideTask = nil
-        scrollBarView.alpha = 0
+        hideScrollBarImmediately()
         stopAllAnimations()
     }
 
@@ -671,22 +687,17 @@ extension DetentScrollViewController {
         isDragging = false
         lastPanTranslation = 0
 
-        // Always schedule scroll bar hide when drag ends.
-        //
-        // Why unconditional: There are multiple code paths that should hide the scroll bar
-        // (stopMomentum, animateToSection completion, etc.), but edge cases at scroll
-        // boundaries - particularly at the bottom of the last section - can cause the
-        // hide to not trigger. Rather than chase down every edge case, we always schedule
-        // a hide here as a safeguard. The hide task self-deduplicates (calling it multiple
-        // times just resets the 1-second timer), so there's no harm in redundant calls.
-        hideScrollBarAfterDelay()
+        // Schedule scroll bar hide - the state machine handles deduplication,
+        // so this safely works alongside other hide calls in stopMomentum and
+        // animateToSection completion.
+        scheduleScrollBarHide()
     }
 
     private func handleDragCancelled() {
         isDragging = false
         lastPanTranslation = 0
         animateSnapBack(velocity: 0)
-        hideScrollBarAfterDelay()
+        scheduleScrollBarHide()
     }
 
     // MARK: - Scroll Application
@@ -822,7 +833,7 @@ extension DetentScrollViewController {
                 self.onSectionChanged?(newSection)
                 self.validateScrollState(context: "sectionAnimationComplete")
             }
-            self.hideScrollBarAfterDelay()
+            self.scheduleScrollBarHide()
         }
 
         sectionAnimator = animator
@@ -1251,7 +1262,7 @@ extension DetentScrollViewController {
         // The isDragging check prevents hiding when stopMomentum is called from
         // handleDragBegan (which cancels any existing momentum before showing the bar).
         if !isDragging {
-            hideScrollBarAfterDelay()
+            scheduleScrollBarHide()
         }
         // Note: We intentionally don't validate state here because stopMomentum can be
         // called when interrupting animations (e.g., user touches during momentum),
@@ -1315,27 +1326,53 @@ extension DetentScrollViewController {
         )
     }
 
+    /// Shows the scroll bar immediately.
+    /// Cancels any pending hide and transitions to `visible` state.
     private func showScrollBar() {
-        scrollBarHideTask?.cancel()
-        scrollBarHideTask = nil
+        // Cancel any pending hide task
+        if case .hiding(let task) = scrollBarState {
+            task.cancel()
+        }
+
+        scrollBarState = .visible
 
         UIView.animate(withDuration: 0.15) {
             self.scrollBarView.alpha = 1
         }
     }
 
-    private func hideScrollBarAfterDelay() {
-        scrollBarHideTask?.cancel()
-        scrollBarHideTask = Task {
+    /// Schedules the scroll bar to hide after a delay.
+    /// Safe to call multiple times - resets the timer each time.
+    private func scheduleScrollBarHide() {
+        // Cancel any existing hide task
+        if case .hiding(let task) = scrollBarState {
+            task.cancel()
+        }
+
+        let hideTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             if !Task.isCancelled {
                 await MainActor.run {
+                    self.scrollBarState = .hidden
                     UIView.animate(withDuration: 0.3) {
                         self.scrollBarView.alpha = 0
                     }
                 }
             }
         }
+
+        scrollBarState = .hiding(hideTask)
+    }
+
+    /// Hides the scroll bar immediately without delay.
+    /// Used for cleanup (e.g., view disappearing).
+    private func hideScrollBarImmediately() {
+        if case .hiding(let task) = scrollBarState {
+            task.cancel()
+        }
+
+        scrollBarState = .hidden
+        scrollBarView.alpha = 0
     }
 }
 
