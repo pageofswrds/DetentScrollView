@@ -30,8 +30,25 @@ public class SectionHeightCoordinator: ObservableObject {
     /// Minimum height change to consider significant (avoids micro-updates).
     private let changeThreshold: CGFloat = 1.0
 
+    /// Maximum time to defer updates before forcing a flush.
+    /// Prevents indefinite blocking if animation state gets stuck.
+    private let maxDeferralDuration: TimeInterval = 0.5
+
+    /// When deferral started (nil if not deferring).
+    private var deferralStartTime: Date?
+
     /// Whether updates should be deferred (set true when controller is animating).
-    public var shouldDeferUpdates: Bool = false
+    public var shouldDeferUpdates: Bool = false {
+        didSet {
+            if shouldDeferUpdates && !oldValue {
+                // Started deferring - record start time
+                deferralStartTime = Date()
+            } else if !shouldDeferUpdates && oldValue {
+                // Stopped deferring - clear start time
+                deferralStartTime = nil
+            }
+        }
+    }
 
     /// Callback invoked when heights change and should be applied.
     public var onHeightsChanged: (([CGFloat]) -> Void)?
@@ -63,6 +80,18 @@ public class SectionHeightCoordinator: ObservableObject {
         // Check if change is significant
         let currentHeight = measuredHeights[section]
         guard abs(height - currentHeight) > changeThreshold else { return }
+
+        // Check for deferral timeout - if we've been deferring too long, force flush
+        // This prevents indefinite blocking if animation state gets stuck
+        if shouldDeferUpdates, let startTime = deferralStartTime {
+            if Date().timeIntervalSince(startTime) > maxDeferralDuration {
+                // Deferral timed out - flush pending updates and apply this one directly
+                flushPendingUpdates()
+                shouldDeferUpdates = false
+                applyHeight(section: section, height: height)
+                return
+            }
+        }
 
         if shouldDeferUpdates {
             pendingHeights[section] = height
