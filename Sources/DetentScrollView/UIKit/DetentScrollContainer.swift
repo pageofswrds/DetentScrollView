@@ -281,6 +281,11 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     public func makeUIViewController(context: Context) -> DetentScrollViewController {
         let controller = DetentScrollViewController()
 
+        // Set initial section from binding (applied on first layout, no animation)
+        if usesExternalBinding {
+            controller.setInitialSection(currentSection)
+        }
+
         // Determine initial heights
         let initialHeights: [CGFloat]
         if let fixed = fixedSectionHeights {
@@ -394,7 +399,11 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
 
         // Handle programmatic section changes from binding
         // Don't trigger during animations to avoid feedback loops with rapid swiping
-        if usesExternalBinding && controller.currentSection != currentSection && !controller.isAnimating {
+        // Also skip if initial state hasn't been applied yet (setInitialSection handles that)
+        if usesExternalBinding
+            && controller.currentSection != currentSection
+            && !controller.isAnimating
+            && controller.hasAppliedInitialState {
             controller.scrollToSection(currentSection, animated: true)
         }
     }

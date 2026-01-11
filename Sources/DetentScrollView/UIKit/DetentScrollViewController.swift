@@ -41,6 +41,19 @@ public class DetentScrollViewController: UIViewController {
     /// Current section index.
     public private(set) var currentSection: Int = 0
 
+    /// Whether initial state has been applied (distinguishes "starts at 0" from "wants 0").
+    public private(set) var hasAppliedInitialState: Bool = false
+
+    /// Initial section to restore on first layout.
+    private var pendingInitialSection: Int = 0
+
+    /// Sets the initial section to restore when the view first lays out.
+    /// Call this during makeUIViewController before viewDidLoad.
+    /// Unlike scrollToSection, this does not animate.
+    public func setInitialSection(_ section: Int) {
+        pendingInitialSection = section
+    }
+
     /// Internal scroll offset within the current section.
     ///
     /// **Important Contract:** This value may temporarily be negative or exceed `maxInternalScroll`
@@ -346,6 +359,18 @@ public class DetentScrollViewController: UIViewController {
         let hostingFrame = CGRect(x: 0, y: 0, width: newWidth, height: newHeight)
         if hostingController?.view.frame != hostingFrame {
             hostingController?.view.frame = hostingFrame
+        }
+
+        // Apply initial section on first layout when heights are available
+        if !hasAppliedInitialState && !sectionHeights.isEmpty {
+            let clampedSection = max(0, min(pendingInitialSection, sectionHeights.count - 1))
+            currentSection = clampedSection
+            internalOffset = 0
+            rawDragOffset = 0
+            hasAppliedInitialState = true
+            onSectionChanged?(clampedSection)
+            // Report initial scroll progress
+            onScrollProgress?(clampedSection > 0 ? 1.0 : 0.0)
         }
 
         // Update scroll bar frame
