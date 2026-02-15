@@ -780,16 +780,17 @@ extension DetentScrollViewController {
         currentSection += 1
         rawDragOffset = 0
 
-        // Calculate internalOffset to maintain visual continuity
-        // visualOffset = -currentSectionOffset + currentSnapInset - internalOffset + dragOffset
-        // With rawDragOffset = 0, dragOffset = 0, so:
-        // currentVisual = -currentSectionOffset + currentSnapInset - internalOffset
-        // Solving for internalOffset:
+        // Calculate internalOffset to maintain visual continuity.
+        // This value will be out of bounds (negative for next-section, above max for previous-section)
+        // because the user's visual position is still in the old section's range. This is intentional:
+        // - Continued dragging naturally moves internalOffset toward valid range
+        // - isAtSectionTop/isAtSectionBottom provide rubber-band resistance on reversal
+        // - On finger lift, the momentum system's spring physics settle it to bounds
+        // See internalOffset's documentation for the out-of-bounds contract.
         internalOffset = -currentSectionOffset + currentSnapInset - currentVisual
 
-        // Notify callbacks
+        // Notify section change
         onSectionChanged?(currentSection)
-        onScrollProgress?(1.0)
     }
 
     /// Breaks through the detent barrier to the previous section during drag.
@@ -807,12 +808,11 @@ extension DetentScrollViewController {
         currentSection -= 1
         rawDragOffset = 0
 
-        // Calculate internalOffset to maintain visual continuity
+        // Calculate internalOffset to maintain visual continuity (see breakThroughToNextSection).
         internalOffset = -currentSectionOffset + currentSnapInset - currentVisual
 
-        // Notify callbacks
+        // Notify section change
         onSectionChanged?(currentSection)
-        onScrollProgress?(0.0)
     }
 }
 
