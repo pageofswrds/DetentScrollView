@@ -705,6 +705,12 @@ extension DetentScrollViewController {
     private func applyScrollUpInternal(delta: CGFloat) {
         if isAtSectionTop {
             rawDragOffset += delta
+
+            // Check if we've broken through the threshold to previous section
+            let threshold = configuration.threshold
+            if rawDragOffset > threshold && currentSection > 0 {
+                breakThroughToPreviousSection(overflow: rawDragOffset - threshold)
+            }
         } else {
             let newInternal = internalOffset - delta
             if newInternal < 0 {
@@ -735,6 +741,12 @@ extension DetentScrollViewController {
     private func applyScrollDownInternal(delta: CGFloat) {
         if isAtSectionBottom {
             rawDragOffset += delta
+
+            // Check if we've broken through the threshold to next section
+            let threshold = configuration.threshold
+            if -rawDragOffset > threshold && currentSection < sectionHeights.count - 1 {
+                breakThroughToNextSection(overflow: -rawDragOffset - threshold)
+            }
         } else {
             let newInternal = internalOffset - delta
             if newInternal > maxInternalScroll {
@@ -745,6 +757,62 @@ extension DetentScrollViewController {
                 internalOffset = newInternal
             }
         }
+    }
+
+    // MARK: - Breakable Barrier
+
+    /// Breaks through the detent barrier to the next section during drag.
+    ///
+    /// Called when the user drags past the threshold while still dragging (not on release).
+    /// This provides a more fluid experience - scrolling continues naturally into the next section.
+    ///
+    /// Key insight: Capture visual position BEFORE changing state, then calculate the new
+    /// internalOffset that maintains the same visual position. This prevents any visible jump.
+    private func breakThroughToNextSection(overflow: CGFloat) {
+        // Capture visual position BEFORE changing any state
+        let currentVisual = visualOffset
+
+        // Haptic feedback for crossing the detent
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
+
+        // Transition to next section
+        currentSection += 1
+        rawDragOffset = 0
+
+        // Calculate internalOffset to maintain visual continuity
+        // visualOffset = -currentSectionOffset + currentSnapInset - internalOffset + dragOffset
+        // With rawDragOffset = 0, dragOffset = 0, so:
+        // currentVisual = -currentSectionOffset + currentSnapInset - internalOffset
+        // Solving for internalOffset:
+        internalOffset = -currentSectionOffset + currentSnapInset - currentVisual
+
+        // Notify callbacks
+        onSectionChanged?(currentSection)
+        onScrollProgress?(1.0)
+    }
+
+    /// Breaks through the detent barrier to the previous section during drag.
+    ///
+    /// Called when the user drags past the threshold while still dragging (not on release).
+    private func breakThroughToPreviousSection(overflow: CGFloat) {
+        // Capture visual position BEFORE changing any state
+        let currentVisual = visualOffset
+
+        // Haptic feedback for crossing the detent
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
+
+        // Transition to previous section
+        currentSection -= 1
+        rawDragOffset = 0
+
+        // Calculate internalOffset to maintain visual continuity
+        internalOffset = -currentSectionOffset + currentSnapInset - currentVisual
+
+        // Notify callbacks
+        onSectionChanged?(currentSection)
+        onScrollProgress?(0.0)
     }
 }
 
