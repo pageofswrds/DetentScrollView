@@ -145,6 +145,13 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
     /// Whether scroll progress binding is being used.
     private let usesScrollProgressBinding: Bool
 
+    /// Binding to receive the measured pinned header height.
+    /// Allows consumers to adjust section sizing to account for the pinned header.
+    @Binding private var pinnedHeaderHeight: CGFloat
+
+    /// Whether pinned header height binding is being used.
+    private let usesPinnedHeaderHeightBinding: Bool
+
     // MARK: - Content
 
     /// The SwiftUI content to display.
@@ -207,6 +214,9 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
             self._scrollProgress = .constant(0)
             self.usesScrollProgressBinding = false
         }
+
+        self._pinnedHeaderHeight = .constant(0)
+        self.usesPinnedHeaderHeightBinding = false
     }
 
     /// Creates a detent scroll container with dynamically measured section heights.
@@ -275,6 +285,9 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
             self._scrollProgress = .constant(0)
             self.usesScrollProgressBinding = false
         }
+
+        self._pinnedHeaderHeight = .constant(0)
+        self.usesPinnedHeaderHeightBinding = false
     }
 
     /// Creates a detent scroll container with fixed section heights and a pinned header.
@@ -296,6 +309,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         configuration: DetentScrollConfiguration = .default,
         currentSection: Binding<Int>? = nil,
         scrollProgress: Binding<CGFloat>? = nil,
+        pinnedHeaderHeight: Binding<CGFloat>? = nil,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder pinnedHeader: () -> PinnedHeader
@@ -330,6 +344,14 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
             self._scrollProgress = .constant(0)
             self.usesScrollProgressBinding = false
         }
+
+        if let binding = pinnedHeaderHeight {
+            self._pinnedHeaderHeight = binding
+            self.usesPinnedHeaderHeightBinding = true
+        } else {
+            self._pinnedHeaderHeight = .constant(0)
+            self.usesPinnedHeaderHeightBinding = false
+        }
     }
 
     /// Creates a detent scroll container with dynamically measured section heights and a pinned header.
@@ -352,6 +374,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         configuration: DetentScrollConfiguration = .default,
         currentSection: Binding<Int>? = nil,
         scrollProgress: Binding<CGFloat>? = nil,
+        pinnedHeaderHeight: Binding<CGFloat>? = nil,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder pinnedHeader: () -> PinnedHeader
@@ -385,6 +408,14 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         } else {
             self._scrollProgress = .constant(0)
             self.usesScrollProgressBinding = false
+        }
+
+        if let binding = pinnedHeaderHeight {
+            self._pinnedHeaderHeight = binding
+            self.usesPinnedHeaderHeightBinding = true
+        } else {
+            self._pinnedHeaderHeight = .constant(0)
+            self.usesPinnedHeaderHeightBinding = false
         }
     }
 
@@ -461,6 +492,11 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         // Set callback for scroll progress (scroll-driven animations)
         controller.onScrollProgress = { [weak coordinator = context.coordinator] progress in
             coordinator?.scrollProgressChanged(progress)
+        }
+
+        // Set callback for pinned header height changes
+        controller.onPinnedHeaderHeightChanged = { [weak coordinator = context.coordinator] height in
+            coordinator?.pinnedHeaderHeightChanged(height)
         }
 
         return controller
@@ -559,6 +595,12 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         func scrollProgressChanged(_ progress: CGFloat) {
             if parent.usesScrollProgressBinding {
                 parent.scrollProgress = progress
+            }
+        }
+
+        func pinnedHeaderHeightChanged(_ height: CGFloat) {
+            if parent.usesPinnedHeaderHeightBinding {
+                parent.pinnedHeaderHeight = height
             }
         }
     }

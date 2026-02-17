@@ -225,6 +225,10 @@ public class DetentScrollViewController: UIViewController {
     /// This enables scroll-driven animations like collapsing headers.
     public var onScrollProgress: ((CGFloat) -> Void)?
 
+    /// Called when pinned header height changes.
+    /// Allows consumers to adjust section sizing to account for the pinned header.
+    public var onPinnedHeaderHeightChanged: ((CGFloat) -> Void)?
+
     // MARK: - Views
 
     /// Container view that gets transformed for scrolling.
@@ -352,7 +356,10 @@ public class DetentScrollViewController: UIViewController {
             pinnedHC.view.frame = pinnedContainer.bounds
 
             // Track height (drives scroll geometry)
-            pinnedHeaderHeight = newHeight
+            if pinnedHeaderHeight != newHeight {
+                pinnedHeaderHeight = newHeight
+                onPinnedHeaderHeightChanged?(newHeight)
+            }
         }
 
         // Update content container size while preserving y position during drag
