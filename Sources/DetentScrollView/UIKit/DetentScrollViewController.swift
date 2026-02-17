@@ -81,6 +81,11 @@ public class DetentScrollViewController: UIViewController {
     /// between UIView animations and display link frame updates.
     private var snapBackVelocity: CGFloat = 0
 
+    /// Whether internalOffset is out of bounds due to a breakthrough (not overscroll).
+    /// When true, momentum uses friction instead of spring in the out-of-bounds region,
+    /// preserving the user's swipe velocity through the section transition.
+    private var didBreakThrough: Bool = false
+
     /// Whether a section transition animation is in progress.
     private var isSectionAnimating: Bool = false
 
@@ -246,6 +251,7 @@ public class DetentScrollViewController: UIViewController {
     /// Current measured height of the pinned header.
     private(set) var pinnedHeaderHeight: CGFloat = 0
 
+
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
 
@@ -307,7 +313,10 @@ public class DetentScrollViewController: UIViewController {
 
     private func setupViews() {
         view.backgroundColor = .clear
-        view.clipsToBounds = true
+        // clipsToBounds = false allows marking menu overlays from the pinned header
+        // to extend above the view's bounds (e.g., into a toolbar area above).
+        // Scroll content is not affected because the pinned header renders above it in z-order.
+        view.clipsToBounds = false
 
         // Content container - this view gets transformed
         contentContainerView = UIView()
@@ -660,11 +669,13 @@ extension DetentScrollViewController {
             currentSection = endState.section
 
             // Calculate internalOffset from actual frame position.
+            // Subtract pinnedHeaderHeight because it's a constant additive term in visualOffset —
+            // including it in actualFrameY would shift internalOffset by that amount.
             // Allow out-of-bounds values - see internalOffset documentation for the contract.
             // The momentum system's spring physics will settle this to valid bounds.
             let targetSectionOffset = sectionOffsets[currentSection]
             let targetSnapInset = snapInset(for: currentSection)
-            internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
+            internalOffset = -targetSectionOffset + targetSnapInset + pinnedHeaderHeight - actualFrameY
 
             rawDragOffset = 0
 
@@ -884,6 +895,7 @@ extension DetentScrollViewController {
         // - On finger lift, the momentum system's spring physics settle it to bounds
         // See internalOffset's documentation for the out-of-bounds contract.
         internalOffset = -currentSectionOffset + currentSnapInset - currentScroll
+        didBreakThrough = true
 
         // Notify section change
         onSectionChanged?(currentSection)
@@ -906,6 +918,7 @@ extension DetentScrollViewController {
 
         // Calculate internalOffset to maintain visual continuity (see breakThroughToNextSection).
         internalOffset = -currentSectionOffset + currentSnapInset - currentScroll
+        didBreakThrough = true
 
         // Notify section change
         onSectionChanged?(currentSection)
@@ -1214,10 +1227,11 @@ extension DetentScrollViewController {
                 currentSection = endState.section
 
                 // Calculate internalOffset from actual frame position.
+                // Subtract pinnedHeaderHeight (constant term in visualOffset) to avoid double-counting.
                 // Allow out-of-bounds values - see internalOffset documentation for the contract.
                 let targetSectionOffset = sectionOffsets[currentSection]
                 let targetSnapInset = snapInset(for: currentSection)
-                internalOffset = -targetSectionOffset + targetSnapInset - actualFrameY
+                internalOffset = -targetSectionOffset + targetSnapInset + pinnedHeaderHeight - actualFrameY
 
                 rawDragOffset = 0
                 contentContainerView.frame.origin.y = actualFrameY
@@ -1316,30 +1330,60 @@ extension DetentScrollViewController {
         let isPastBottom = internalOffset > maxInternalScroll
 
         if isPastTop || isPastBottom {
-            // Over-damped spring bounce
             let boundary: CGFloat = isPastTop ? 0 : maxInternalScroll
-            let displacement = internalOffset - boundary
 
-            let force = Physics.springForce(
-                displacement: displacement,
-                velocity: momentumVelocity,
-                stiffness: bounceStiffness,
-                damping: bounceDamping
-            )
-            momentumVelocity += force * frameTime
-            internalOffset = Physics.integrate(
-                position: internalOffset,
-                velocity: momentumVelocity,
-                deltaTime: frameTime
-            )
+            if didBreakThrough {
+                // After breakthrough: use friction-based momentum through the transition region.
+                // Spring physics would kill the velocity before reaching the boundary.
+                internalOffset = Physics.integrate(
+                    position: internalOffset,
+                    velocity: momentumVelocity,
+                    deltaTime: frameTime
+                )
+                momentumVelocity = Physics.applyFriction(
+                    velocity: momentumVelocity,
+                    friction: friction
+                )
 
-            let reachedTop = isPastTop && internalOffset >= 0
-            let reachedBottom = isPastBottom && internalOffset <= maxInternalScroll
+                // Check if we've entered the valid range
+                let reachedTop = isPastTop && internalOffset >= 0
+                let reachedBottom = isPastBottom && internalOffset <= maxInternalScroll
 
-            if reachedTop || reachedBottom {
-                internalOffset = boundary
-                momentumVelocity = 0
-                momentumComplete = true
+                if reachedTop || reachedBottom {
+                    internalOffset = boundary
+                    didBreakThrough = false
+                    // Don't zero velocity — continue with friction in the normal branch
+                }
+
+                if abs(momentumVelocity) < 1 {
+                    momentumVelocity = 0
+                    momentumComplete = true
+                }
+            } else {
+                // Genuine overscroll: over-damped spring bounce back to boundary
+                let displacement = internalOffset - boundary
+
+                let force = Physics.springForce(
+                    displacement: displacement,
+                    velocity: momentumVelocity,
+                    stiffness: bounceStiffness,
+                    damping: bounceDamping
+                )
+                momentumVelocity += force * frameTime
+                internalOffset = Physics.integrate(
+                    position: internalOffset,
+                    velocity: momentumVelocity,
+                    deltaTime: frameTime
+                )
+
+                let reachedTop = isPastTop && internalOffset >= 0
+                let reachedBottom = isPastBottom && internalOffset <= maxInternalScroll
+
+                if reachedTop || reachedBottom {
+                    internalOffset = boundary
+                    momentumVelocity = 0
+                    momentumComplete = true
+                }
             }
         } else if abs(momentumVelocity) > 0 {
             // Normal friction-based momentum
@@ -1406,6 +1450,7 @@ extension DetentScrollViewController {
         displayLink = nil
         momentumVelocity = 0
         snapBackVelocity = 0
+        didBreakThrough = false
 
         // Hide scroll bar when momentum stops, unless we're mid-drag.
         // The isDragging check prevents hiding when stopMomentum is called from
@@ -1459,11 +1504,11 @@ extension DetentScrollViewController {
     }
 
     private var scrollBarOffsetY: CGFloat {
-        guard totalScrollableDistance > 0 else { return 8 }
+        guard totalScrollableDistance > 0 else { return pinnedHeaderHeight + 8 }
         let progress = currentAbsoluteOffset / totalScrollableDistance
         let clampedProgress = max(0, min(1, progress))
-        let trackHeight = view.bounds.height - scrollBarHeight - 16
-        return 8 + (clampedProgress * trackHeight)
+        let trackHeight = view.bounds.height - pinnedHeaderHeight - scrollBarHeight - 16
+        return pinnedHeaderHeight + 8 + (clampedProgress * trackHeight)
     }
 
     private func updateScrollBarFrame() {
