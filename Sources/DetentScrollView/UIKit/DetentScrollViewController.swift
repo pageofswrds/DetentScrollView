@@ -751,6 +751,14 @@ extension DetentScrollViewController {
     private func handleDragEnded(translation: CGFloat, velocity: CGFloat) {
         let threshold = configuration.threshold
 
+        // If a breakthrough occurred during the drag but the user kept dragging until
+        // internalOffset re-entered the valid range, clear the flag. Otherwise the
+        // friction-based momentum path (designed for the transition region) will drive
+        // internalOffset past the boundary with no restoring spring force.
+        if didBreakThrough && internalOffset >= 0 && internalOffset <= maxInternalScroll {
+            didBreakThrough = false
+        }
+
         // Velocity-based triggering thresholds
         let velocityThreshold: CGFloat = 800  // points per second
         let minDistanceForVelocity: CGFloat = 30  // minimum drag to consider velocity
