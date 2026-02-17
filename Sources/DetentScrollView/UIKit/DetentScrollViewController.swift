@@ -458,9 +458,11 @@ public class DetentScrollViewController: UIViewController {
         }
 
         // Create pinned header container
+        // clipsToBounds is false so child content (marking menus, drag overlays)
+        // can extend beyond the header's bounds and render over the scroll content.
         let headerContainer = UIView()
         headerContainer.backgroundColor = .clear
-        headerContainer.clipsToBounds = true
+        headerContainer.clipsToBounds = false
         view.addSubview(headerContainer)
 
         // Create hosting controller
