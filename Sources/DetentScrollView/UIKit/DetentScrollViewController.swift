@@ -1524,11 +1524,11 @@ extension DetentScrollViewController {
     }
 
     private var scrollBarOffsetY: CGFloat {
-        guard totalScrollableDistance > 0 else { return pinnedHeaderHeight + 8 }
+        guard totalScrollableDistance > 0 else { return 8 }
         let progress = currentAbsoluteOffset / totalScrollableDistance
         let clampedProgress = max(0, min(1, progress))
-        let trackHeight = view.bounds.height - pinnedHeaderHeight - scrollBarHeight - 16
-        return pinnedHeaderHeight + 8 + (clampedProgress * trackHeight)
+        let trackHeight = view.bounds.height - scrollBarHeight - 16
+        return 8 + (clampedProgress * trackHeight)
     }
 
     private func updateScrollBarFrame() {
