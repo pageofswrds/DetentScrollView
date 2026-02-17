@@ -103,6 +103,26 @@ final class DetentScrollViewTests: XCTestCase {
             Color.red
         }
     }
+
+    // MARK: - SectionPinning Tests
+
+    func testSectionPinningNone() {
+        let pinning = SectionPinning.none
+        if case .none = pinning {
+            // Expected
+        } else {
+            XCTFail("Expected .none")
+        }
+    }
+
+    func testSectionPinningFixedTop() {
+        let pinning = SectionPinning.fixed(.top)
+        if case .fixed(let edge) = pinning {
+            XCTAssertEqual(edge, .top)
+        } else {
+            XCTFail("Expected .fixed(.top)")
+        }
+    }
 }
 
 // Note: Physics tests have been moved to Mercurial package.
