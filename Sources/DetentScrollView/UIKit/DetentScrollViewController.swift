@@ -780,6 +780,15 @@ extension DetentScrollViewController {
             // No section transition - snap back and apply momentum
             animateSnapBack(velocity: velocity)
             applyMomentum(velocity: velocity)
+
+            // If internalOffset is out of bounds (e.g. after breakthrough where the user
+            // stopped before reaching valid range), ensure the momentum system runs to
+            // spring it back. Clear didBreakThrough so spring-bounce is used instead of
+            // friction (which is a no-op at low velocity).
+            if internalOffset < 0 || internalOffset > maxInternalScroll {
+                didBreakThrough = false
+                ensureMomentumDisplayLinkRunning()
+            }
         }
 
         isDragging = false
@@ -1365,7 +1374,10 @@ extension DetentScrollViewController {
 
                 if abs(momentumVelocity) < 1 {
                     momentumVelocity = 0
-                    momentumComplete = true
+                    // Friction has fully decayed but we're still out of bounds.
+                    // Clear didBreakThrough so the spring-bounce path engages
+                    // on the next frame to pull internalOffset back to the boundary.
+                    didBreakThrough = false
                 }
             } else {
                 // Genuine overscroll: over-damped spring bounce back to boundary
