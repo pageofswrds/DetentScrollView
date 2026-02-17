@@ -863,8 +863,10 @@ extension DetentScrollViewController {
     /// Key insight: Capture visual position BEFORE changing state, then calculate the new
     /// internalOffset that maintains the same visual position. This prevents any visible jump.
     private func breakThroughToNextSection(overflow: CGFloat) {
-        // Capture visual position BEFORE changing any state
-        let currentVisual = visualOffset
+        // Capture scroll position BEFORE changing any state.
+        // Subtract pinnedHeaderHeight because it's a constant additive term in visualOffset —
+        // including it here would double-count it when visualOffset is recomputed.
+        let currentScroll = visualOffset - pinnedHeaderHeight
 
         // Haptic feedback for crossing the detent
         let impact = UIImpactFeedbackGenerator(style: .medium)
@@ -881,7 +883,7 @@ extension DetentScrollViewController {
         // - isAtSectionTop/isAtSectionBottom provide rubber-band resistance on reversal
         // - On finger lift, the momentum system's spring physics settle it to bounds
         // See internalOffset's documentation for the out-of-bounds contract.
-        internalOffset = -currentSectionOffset + currentSnapInset - currentVisual
+        internalOffset = -currentSectionOffset + currentSnapInset - currentScroll
 
         // Notify section change
         onSectionChanged?(currentSection)
@@ -891,8 +893,8 @@ extension DetentScrollViewController {
     ///
     /// Called when the user drags past the threshold while still dragging (not on release).
     private func breakThroughToPreviousSection(overflow: CGFloat) {
-        // Capture visual position BEFORE changing any state
-        let currentVisual = visualOffset
+        // Capture scroll position BEFORE changing any state (see breakThroughToNextSection).
+        let currentScroll = visualOffset - pinnedHeaderHeight
 
         // Haptic feedback for crossing the detent
         let impact = UIImpactFeedbackGenerator(style: .medium)
@@ -903,7 +905,7 @@ extension DetentScrollViewController {
         rawDragOffset = 0
 
         // Calculate internalOffset to maintain visual continuity (see breakThroughToNextSection).
-        internalOffset = -currentSectionOffset + currentSnapInset - currentVisual
+        internalOffset = -currentSectionOffset + currentSnapInset - currentScroll
 
         // Notify section change
         onSectionChanged?(currentSection)
