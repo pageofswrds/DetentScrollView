@@ -233,6 +233,15 @@ public class DetentScrollViewController: UIViewController {
     /// Hosting controller for SwiftUI content.
     private var hostingController: UIHostingController<AnyView>?
 
+    /// Container view for the pinned header (non-scrolling).
+    private var pinnedHeaderView: UIView?
+
+    /// Hosting controller for the pinned header's SwiftUI content.
+    private var pinnedHeaderHostingController: UIHostingController<AnyView>?
+
+    /// Current measured height of the pinned header.
+    private(set) var pinnedHeaderHeight: CGFloat = 0
+
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
 
@@ -328,6 +337,24 @@ public class DetentScrollViewController: UIViewController {
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
+        // --- Pinned header layout ---
+        if let pinnedHC = pinnedHeaderHostingController,
+           let pinnedContainer = pinnedHeaderView {
+            // Measure pinned header's preferred height
+            let targetSize = CGSize(width: view.bounds.width, height: UIView.layoutFittingCompressedSize.height)
+            let fittingSize = pinnedHC.sizeThatFits(in: targetSize)
+            let newHeight = fittingSize.height
+
+            // Update container frame
+            pinnedContainer.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: newHeight)
+
+            // Update hosting controller frame within container
+            pinnedHC.view.frame = pinnedContainer.bounds
+
+            // Track height (drives scroll geometry)
+            pinnedHeaderHeight = newHeight
+        }
+
         // Update content container size while preserving y position during drag
         let newWidth = view.bounds.width
         let newHeight = totalContentHeight
@@ -399,6 +426,63 @@ public class DetentScrollViewController: UIViewController {
         view.layoutIfNeeded()
     }
 
+    /// Sets the SwiftUI content for the pinned header.
+    ///
+    /// The pinned header is rendered in a separate view above the scroll content.
+    /// It does not scroll — the scroll content is positioned below it.
+    ///
+    /// - Parameter content: The SwiftUI view to pin at the top. Pass `nil` to remove.
+    public func setPinnedHeader<V: View>(_ content: V?) {
+        // Ensure view is loaded
+        loadViewIfNeeded()
+
+        guard let content = content else {
+            // Remove pinned header
+            pinnedHeaderHostingController?.view.removeFromSuperview()
+            pinnedHeaderHostingController?.removeFromParent()
+            pinnedHeaderHostingController = nil
+            pinnedHeaderView?.removeFromSuperview()
+            pinnedHeaderView = nil
+            pinnedHeaderHeight = 0
+            view.setNeedsLayout()
+            return
+        }
+
+        let wrappedContent = AnyView(content.ignoresSafeArea())
+
+        // Update existing hosting controller if available (preserves @State)
+        if let existingHC = pinnedHeaderHostingController {
+            existingHC.rootView = wrappedContent
+            view.setNeedsLayout()
+            return
+        }
+
+        // Create pinned header container
+        let headerContainer = UIView()
+        headerContainer.backgroundColor = .clear
+        headerContainer.clipsToBounds = true
+        view.addSubview(headerContainer)
+
+        // Create hosting controller
+        let hc = UIHostingController(rootView: wrappedContent)
+        hc.view.backgroundColor = .clear
+        hc.view.translatesAutoresizingMaskIntoConstraints = true
+
+        addChild(hc)
+        headerContainer.addSubview(hc.view)
+        hc.didMove(toParent: self)
+
+        pinnedHeaderView = headerContainer
+        pinnedHeaderHostingController = hc
+
+        // Ensure pinned header is above content but below scroll bar
+        if let scrollBar = scrollBarView {
+            view.insertSubview(headerContainer, belowSubview: scrollBar)
+        }
+
+        view.setNeedsLayout()
+    }
+
     // MARK: - Section Geometry
 
     /// Pre-compute section offsets.
@@ -455,7 +539,8 @@ public class DetentScrollViewController: UIViewController {
     private func maxInternalScroll(for section: Int) -> CGFloat {
         guard section < sectionHeights.count else { return 0 }
         let inset = snapInset(for: section)
-        return max(0, sectionHeights[section] - view.bounds.height + inset)
+        let availableHeight = view.bounds.height - pinnedHeaderHeight
+        return max(0, sectionHeights[section] - availableHeight + inset)
     }
 
     // MARK: - Scroll Position
@@ -482,7 +567,7 @@ public class DetentScrollViewController: UIViewController {
     /// The visual offset applied to content.
     private var visualOffset: CGFloat {
         let baseOffset = -currentSectionOffset + currentSnapInset - internalOffset
-        return baseOffset + dragOffset
+        return pinnedHeaderHeight + baseOffset + dragOffset
     }
 
     // MARK: - Offset Updates
