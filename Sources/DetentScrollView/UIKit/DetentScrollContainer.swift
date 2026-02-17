@@ -599,7 +599,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         }
 
         func pinnedHeaderHeightChanged(_ height: CGFloat) {
-            if parent.usesPinnedHeaderHeightBinding {
+            if parent.usesPinnedHeaderHeightBinding, height > parent.pinnedHeaderHeight {
                 parent.pinnedHeaderHeight = height
             }
         }
