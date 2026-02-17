@@ -106,7 +106,7 @@ public extension EnvironmentValues {
 ///     }
 /// }
 /// ```
-public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentable {
+public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewControllerRepresentable {
 
     // MARK: - Configuration
 
@@ -150,6 +150,9 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
     /// The SwiftUI content to display.
     public let content: Content
 
+    /// The SwiftUI content to display as a pinned header, or nil.
+    public let pinnedHeader: PinnedHeader?
+
     // MARK: - Initializers
 
     /// Creates a detent scroll container with fixed section heights.
@@ -172,9 +175,10 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         scrollProgress: Binding<CGFloat>? = nil,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
-    ) {
+    ) where PinnedHeader == EmptyView {
         self.fixedSectionHeights = sectionHeights
         self.sectionCount = nil
+        self.pinnedHeader = nil
 
         // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
@@ -239,11 +243,123 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         scrollProgress: Binding<CGFloat>? = nil,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
+    ) where PinnedHeader == EmptyView {
+        self.fixedSectionHeights = nil
+        self.sectionCount = sectionCount
+        self.pinnedHeader = nil
+
+        // Ensure snap insets array matches section count
+        let insets = sectionSnapInsets ?? []
+        if insets.count < sectionCount {
+            self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionCount - insets.count)
+        } else {
+            self.sectionSnapInsets = Array(insets.prefix(sectionCount))
+        }
+
+        self.configuration = configuration
+        self.isScrollDisabled = isScrollDisabled
+        self.content = content()
+
+        if let binding = currentSection {
+            self._currentSection = binding
+            self.usesExternalBinding = true
+        } else {
+            self._currentSection = .constant(0)
+            self.usesExternalBinding = false
+        }
+
+        if let binding = scrollProgress {
+            self._scrollProgress = binding
+            self.usesScrollProgressBinding = true
+        } else {
+            self._scrollProgress = .constant(0)
+            self.usesScrollProgressBinding = false
+        }
+    }
+
+    /// Creates a detent scroll container with fixed section heights and a pinned header.
+    ///
+    /// The pinned header stays fixed at the top of the viewport and does not scroll with content.
+    ///
+    /// - Parameters:
+    ///   - sectionHeights: Height of each section in points.
+    ///   - sectionSnapInsets: Optional insets for each section (default: all zeros).
+    ///   - configuration: Threshold and resistance configuration.
+    ///   - currentSection: Optional binding to observe/control current section.
+    ///   - scrollProgress: Optional binding to observe scroll progress (0.0-1.0) for scroll-driven animations.
+    ///   - isScrollDisabled: External signal to disable scrolling.
+    ///   - content: The content to display.
+    ///   - pinnedHeader: The pinned header content to display above the scroll view.
+    public init(
+        sectionHeights: [CGFloat],
+        sectionSnapInsets: [CGFloat]? = nil,
+        configuration: DetentScrollConfiguration = .default,
+        currentSection: Binding<Int>? = nil,
+        scrollProgress: Binding<CGFloat>? = nil,
+        isScrollDisabled: Bool = false,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder pinnedHeader: () -> PinnedHeader
+    ) {
+        self.fixedSectionHeights = sectionHeights
+        self.sectionCount = nil
+        self.pinnedHeader = pinnedHeader()
+
+        let insets = sectionSnapInsets ?? []
+        if insets.count < sectionHeights.count {
+            self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionHeights.count - insets.count)
+        } else {
+            self.sectionSnapInsets = Array(insets.prefix(sectionHeights.count))
+        }
+
+        self.configuration = configuration
+        self.isScrollDisabled = isScrollDisabled
+        self.content = content()
+
+        if let binding = currentSection {
+            self._currentSection = binding
+            self.usesExternalBinding = true
+        } else {
+            self._currentSection = .constant(0)
+            self.usesExternalBinding = false
+        }
+
+        if let binding = scrollProgress {
+            self._scrollProgress = binding
+            self.usesScrollProgressBinding = true
+        } else {
+            self._scrollProgress = .constant(0)
+            self.usesScrollProgressBinding = false
+        }
+    }
+
+    /// Creates a detent scroll container with dynamically measured section heights and a pinned header.
+    ///
+    /// The pinned header stays fixed at the top of the viewport and does not scroll with content.
+    /// Wrap each section in a `DetentSection` view to enable height measurement.
+    ///
+    /// - Parameters:
+    ///   - sectionCount: The number of sections to track.
+    ///   - sectionSnapInsets: Optional insets for each section (default: all zeros).
+    ///   - configuration: Threshold and resistance configuration.
+    ///   - currentSection: Optional binding to observe/control current section.
+    ///   - scrollProgress: Optional binding to observe scroll progress (0.0-1.0) for scroll-driven animations.
+    ///   - isScrollDisabled: External signal to disable scrolling.
+    ///   - content: The content to display. Each section should be wrapped in `DetentSection`.
+    ///   - pinnedHeader: The pinned header content to display above the scroll view.
+    public init(
+        sectionCount: Int,
+        sectionSnapInsets: [CGFloat]? = nil,
+        configuration: DetentScrollConfiguration = .default,
+        currentSection: Binding<Int>? = nil,
+        scrollProgress: Binding<CGFloat>? = nil,
+        isScrollDisabled: Bool = false,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder pinnedHeader: () -> PinnedHeader
     ) {
         self.fixedSectionHeights = nil
         self.sectionCount = sectionCount
+        self.pinnedHeader = pinnedHeader()
 
-        // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
         if insets.count < sectionCount {
             self.sectionSnapInsets = insets + Array(repeating: 0, count: sectionCount - insets.count)
@@ -328,6 +444,15 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
         }
         controller.setContent(contentWithEnvironment)
 
+        // Set up pinned header if provided
+        if let pinnedHeader = pinnedHeader {
+            let headerWithEnvironment = AnyView(
+                pinnedHeader
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+            )
+            controller.setPinnedHeader(headerWithEnvironment)
+        }
+
         // Set callback for section changes
         controller.onSectionChanged = { [weak coordinator = context.coordinator] section in
             coordinator?.sectionChanged(section)
@@ -391,6 +516,15 @@ public struct DetentScrollContainer<Content: View>: UIViewControllerRepresentabl
             )
         }
         controller.setContent(contentWithEnvironment)
+
+        // Update pinned header content if provided
+        if let pinnedHeader = pinnedHeader {
+            let headerWithEnvironment = AnyView(
+                pinnedHeader
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+            )
+            controller.setPinnedHeader(headerWithEnvironment)
+        }
 
         // Handle programmatic section changes from binding
         // Don't trigger during animations to avoid feedback loops with rapid swiping

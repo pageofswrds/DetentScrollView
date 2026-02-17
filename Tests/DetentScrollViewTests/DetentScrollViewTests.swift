@@ -123,6 +123,51 @@ final class DetentScrollViewTests: XCTestCase {
             XCTFail("Expected .fixed(.top)")
         }
     }
+    // MARK: - Pinned Header Tests
+
+    func testViewWithPinnedHeader() {
+        let _ = DetentScrollContainer(
+            sectionHeights: [800, 600]
+        ) {
+            VStack {
+                Color.blue.frame(height: 800)
+                Color.green.frame(height: 600)
+            }
+        } pinnedHeader: {
+            Text("Pinned Header")
+                .frame(height: 44)
+        }
+    }
+
+    func testDynamicHeightsWithPinnedHeader() {
+        let _ = DetentScrollContainer(sectionCount: 2) {
+            VStack(spacing: 0) {
+                DetentSection(index: 0) {
+                    Color.blue.frame(height: 800)
+                }
+                DetentSection(index: 1) {
+                    Color.green.frame(height: 600)
+                }
+            }
+        } pinnedHeader: {
+            Text("Pinned Header")
+                .frame(height: 44)
+        }
+    }
+
+    func testViewWithoutPinnedHeaderStillWorks() {
+        // Verify backward compatibility — no pinnedHeader parameter
+        let _ = DetentScrollContainer(sectionCount: 2) {
+            VStack(spacing: 0) {
+                DetentSection(index: 0) {
+                    Color.blue.frame(height: 800)
+                }
+                DetentSection(index: 1) {
+                    Color.green.frame(height: 600)
+                }
+            }
+        }
+    }
 }
 
 // Note: Physics tests have been moved to Mercurial package.
