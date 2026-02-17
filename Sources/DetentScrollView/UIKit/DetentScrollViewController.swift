@@ -749,8 +749,6 @@ extension DetentScrollViewController {
     }
 
     private func handleDragEnded(translation: CGFloat, velocity: CGFloat) {
-        let threshold = configuration.threshold
-
         // If a breakthrough occurred during the drag but the user kept dragging until
         // internalOffset re-entered the valid range, clear the flag. Otherwise the
         // friction-based momentum path (designed for the transition region) will drive
@@ -759,32 +757,50 @@ extension DetentScrollViewController {
             didBreakThrough = false
         }
 
-        // Velocity-based triggering thresholds
-        let velocityThreshold: CGFloat = 800  // points per second
-        let minDistanceForVelocity: CGFloat = 30  // minimum drag to consider velocity
+        switch configuration.crossingMode {
+        case .breakThrough, .rigid:
+            // Current behavior: distance/velocity check → advance, retreat, or snap back.
+            // For .breakThrough this is a fallback; for .rigid this is the primary mechanism.
+            let threshold = configuration.threshold
 
-        // Check raw drag offset against threshold, or use velocity for quick flicks
-        let distanceAdvance = -rawDragOffset > threshold
-        let velocityAdvance = -rawDragOffset > minDistanceForVelocity && -velocity > velocityThreshold
-        let shouldAdvance = (distanceAdvance || velocityAdvance) && currentSection < sectionHeights.count - 1
+            // Velocity-based triggering thresholds
+            let velocityThreshold: CGFloat = 800  // points per second
+            let minDistanceForVelocity: CGFloat = 30  // minimum drag to consider velocity
 
-        let distanceRetreat = rawDragOffset > threshold
-        let velocityRetreat = rawDragOffset > minDistanceForVelocity && velocity > velocityThreshold
-        let shouldRetreat = (distanceRetreat || velocityRetreat) && currentSection > 0
+            // Check raw drag offset against threshold, or use velocity for quick flicks
+            let distanceAdvance = -rawDragOffset > threshold
+            let velocityAdvance = -rawDragOffset > minDistanceForVelocity && -velocity > velocityThreshold
+            let shouldAdvance = (distanceAdvance || velocityAdvance) && currentSection < sectionHeights.count - 1
 
-        if shouldAdvance {
-            animateToSection(currentSection + 1, fromBottom: false, velocity: velocity)
-        } else if shouldRetreat {
-            animateToSection(currentSection - 1, fromBottom: true, velocity: velocity)
-        } else {
-            // No section transition - snap back and apply momentum
+            let distanceRetreat = rawDragOffset > threshold
+            let velocityRetreat = rawDragOffset > minDistanceForVelocity && velocity > velocityThreshold
+            let shouldRetreat = (distanceRetreat || velocityRetreat) && currentSection > 0
+
+            if shouldAdvance {
+                animateToSection(currentSection + 1, fromBottom: false, velocity: velocity)
+            } else if shouldRetreat {
+                animateToSection(currentSection - 1, fromBottom: true, velocity: velocity)
+            } else {
+                // No section transition - snap back and apply momentum
+                animateSnapBack(velocity: velocity)
+                applyMomentum(velocity: velocity)
+
+                // If internalOffset is out of bounds (e.g. after breakthrough where the user
+                // stopped before reaching valid range), ensure the momentum system runs to
+                // spring it back. Clear didBreakThrough so spring-bounce is used instead of
+                // friction (which is a no-op at low velocity).
+                if internalOffset < 0 || internalOffset > maxInternalScroll {
+                    didBreakThrough = false
+                    ensureMomentumDisplayLinkRunning()
+                }
+            }
+
+        case .free:
+            // Section transitions already happened during drag.
+            // Snap back any edge rubber-band and apply momentum.
             animateSnapBack(velocity: velocity)
             applyMomentum(velocity: velocity)
 
-            // If internalOffset is out of bounds (e.g. after breakthrough where the user
-            // stopped before reaching valid range), ensure the momentum system runs to
-            // spring it back. Clear didBreakThrough so spring-bounce is used instead of
-            // friction (which is a no-op at low velocity).
             if internalOffset < 0 || internalOffset > maxInternalScroll {
                 didBreakThrough = false
                 ensureMomentumDisplayLinkRunning()
@@ -826,19 +842,33 @@ extension DetentScrollViewController {
 
     private func applyScrollUpInternal(delta: CGFloat) {
         if isAtSectionTop {
-            rawDragOffset += delta
-
-            // Check if we've broken through the threshold to previous section
-            let threshold = configuration.threshold
-            if rawDragOffset > threshold && currentSection > 0 {
-                breakThroughToPreviousSection(overflow: rawDragOffset - threshold)
+            switch configuration.crossingMode {
+            case .breakThrough:
+                rawDragOffset += delta
+                let threshold = configuration.threshold
+                if rawDragOffset > threshold && currentSection > 0 {
+                    breakThroughToPreviousSection(overflow: rawDragOffset - threshold)
+                }
+            case .rigid:
+                rawDragOffset += delta
+                // No mid-drag crossing — handleDragEnded decides on release
+            case .free:
+                if currentSection > 0 {
+                    crossToPreviousSection()
+                } else {
+                    rawDragOffset += delta  // Edge rubber-band at absolute top
+                }
             }
         } else {
             let newInternal = internalOffset - delta
             if newInternal < 0 {
                 let overflow = -newInternal
                 internalOffset = 0
-                rawDragOffset += overflow
+                if configuration.crossingMode == .free && currentSection > 0 {
+                    crossToPreviousSection()
+                } else {
+                    rawDragOffset += overflow
+                }
             } else {
                 internalOffset = newInternal
             }
@@ -862,19 +892,33 @@ extension DetentScrollViewController {
 
     private func applyScrollDownInternal(delta: CGFloat) {
         if isAtSectionBottom {
-            rawDragOffset += delta
-
-            // Check if we've broken through the threshold to next section
-            let threshold = configuration.threshold
-            if -rawDragOffset > threshold && currentSection < sectionHeights.count - 1 {
-                breakThroughToNextSection(overflow: -rawDragOffset - threshold)
+            switch configuration.crossingMode {
+            case .breakThrough:
+                rawDragOffset += delta
+                let threshold = configuration.threshold
+                if -rawDragOffset > threshold && currentSection < sectionHeights.count - 1 {
+                    breakThroughToNextSection(overflow: -rawDragOffset - threshold)
+                }
+            case .rigid:
+                rawDragOffset += delta
+                // No mid-drag crossing — handleDragEnded decides on release
+            case .free:
+                if currentSection < sectionHeights.count - 1 {
+                    crossToNextSection()
+                } else {
+                    rawDragOffset += delta  // Edge rubber-band at absolute bottom
+                }
             }
         } else {
             let newInternal = internalOffset - delta
             if newInternal > maxInternalScroll {
                 let overflow = newInternal - maxInternalScroll
                 internalOffset = maxInternalScroll
-                rawDragOffset -= overflow
+                if configuration.crossingMode == .free && currentSection < sectionHeights.count - 1 {
+                    crossToNextSection()
+                } else {
+                    rawDragOffset -= overflow
+                }
             } else {
                 internalOffset = newInternal
             }
@@ -915,6 +959,32 @@ extension DetentScrollViewController {
         didBreakThrough = true
 
         // Notify section change
+        onSectionChanged?(currentSection)
+    }
+
+    /// Seamlessly crosses to the next section with no barrier or haptic.
+    /// Used by `.free` crossing mode.
+    private func crossToNextSection() {
+        let currentScroll = visualOffset - pinnedHeaderHeight
+
+        currentSection += 1
+        rawDragOffset = 0
+        internalOffset = -currentSectionOffset + currentSnapInset - currentScroll
+        didBreakThrough = true
+
+        onSectionChanged?(currentSection)
+    }
+
+    /// Seamlessly crosses to the previous section with no barrier or haptic.
+    /// Used by `.free` crossing mode.
+    private func crossToPreviousSection() {
+        let currentScroll = visualOffset - pinnedHeaderHeight
+
+        currentSection -= 1
+        rawDragOffset = 0
+        internalOffset = -currentSectionOffset + currentSnapInset - currentScroll
+        didBreakThrough = true
+
         onSectionChanged?(currentSection)
     }
 
