@@ -839,6 +839,13 @@ extension DetentScrollViewController {
             // Set frame to match actual position (no visual jump)
             contentContainerView.frame.origin.y = actualFrameY
 
+            // Capture sticky overlay presentation positions to prevent visual jump
+            for i in stickyEntries.indices {
+                if let presentationY = stickyEntries[i].container.layer.presentation()?.frame.origin.y {
+                    stickyEntries[i].container.frame.origin.y = presentationY
+                }
+            }
+
             // Notify binding that we're now in the target section
             // This prevents updateUIViewController from snapping us back to the old section
             onSectionChanged?(currentSection)
@@ -1484,6 +1491,13 @@ extension DetentScrollViewController {
 
                 rawDragOffset = 0
                 contentContainerView.frame.origin.y = actualFrameY
+
+                // Capture sticky overlay presentation positions to prevent visual jump
+                for i in stickyEntries.indices {
+                    if let presentationY = stickyEntries[i].container.layer.presentation()?.frame.origin.y {
+                        stickyEntries[i].container.frame.origin.y = presentationY
+                    }
+                }
 
                 // Notify binding that we're now in the target section
                 onSectionChanged?(currentSection)
