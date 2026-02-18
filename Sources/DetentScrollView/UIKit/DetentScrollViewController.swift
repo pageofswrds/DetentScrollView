@@ -1051,6 +1051,11 @@ extension DetentScrollViewController {
         let currentProgress = calculateCurrentProgress()
         let targetProgress: CGFloat = newSection > 0 ? 1.0 : 0.0
 
+        // Notify section change immediately so UI can react at animation start,
+        // not completion. The completion handler also fires this, but guards
+        // against the section having changed (e.g., interruption).
+        onSectionChanged?(newSection)
+
         // Start progress animation (longer duration to match section animation)
         progressAnimationDuration = 0.4
         startProgressAnimation(from: currentProgress, to: targetProgress)
