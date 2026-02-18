@@ -160,6 +160,9 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
     /// The SwiftUI content to display as a pinned header, or nil.
     public let pinnedHeader: PinnedHeader?
 
+    /// Sticky headers to display above the scroll content.
+    public let stickyHeaders: [StickyHeader]
+
     // MARK: - Initializers
 
     /// Creates a detent scroll container with fixed section heights.
@@ -180,12 +183,14 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         configuration: DetentScrollConfiguration = .default,
         currentSection: Binding<Int>? = nil,
         scrollProgress: Binding<CGFloat>? = nil,
+        stickyHeaders: [StickyHeader] = [],
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
     ) where PinnedHeader == EmptyView {
         self.fixedSectionHeights = sectionHeights
         self.sectionCount = nil
         self.pinnedHeader = nil
+        self.stickyHeaders = stickyHeaders
 
         // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
@@ -251,12 +256,14 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         configuration: DetentScrollConfiguration = .default,
         currentSection: Binding<Int>? = nil,
         scrollProgress: Binding<CGFloat>? = nil,
+        stickyHeaders: [StickyHeader] = [],
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
     ) where PinnedHeader == EmptyView {
         self.fixedSectionHeights = nil
         self.sectionCount = sectionCount
         self.pinnedHeader = nil
+        self.stickyHeaders = stickyHeaders
 
         // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
@@ -310,6 +317,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         currentSection: Binding<Int>? = nil,
         scrollProgress: Binding<CGFloat>? = nil,
         pinnedHeaderHeight: Binding<CGFloat>? = nil,
+        stickyHeaders: [StickyHeader] = [],
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder pinnedHeader: () -> PinnedHeader
@@ -317,6 +325,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         self.fixedSectionHeights = sectionHeights
         self.sectionCount = nil
         self.pinnedHeader = pinnedHeader()
+        self.stickyHeaders = stickyHeaders
 
         let insets = sectionSnapInsets ?? []
         if insets.count < sectionHeights.count {
@@ -375,6 +384,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         currentSection: Binding<Int>? = nil,
         scrollProgress: Binding<CGFloat>? = nil,
         pinnedHeaderHeight: Binding<CGFloat>? = nil,
+        stickyHeaders: [StickyHeader] = [],
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder pinnedHeader: () -> PinnedHeader
@@ -382,6 +392,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         self.fixedSectionHeights = nil
         self.sectionCount = sectionCount
         self.pinnedHeader = pinnedHeader()
+        self.stickyHeaders = stickyHeaders
 
         let insets = sectionSnapInsets ?? []
         if insets.count < sectionCount {
@@ -484,6 +495,17 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
             controller.setPinnedHeader(headerWithEnvironment)
         }
 
+        // Set up sticky headers
+        if !stickyHeaders.isEmpty {
+            let headersWithEnvironment = stickyHeaders.map { header in
+                StickyHeader(during: header.during) {
+                    header.content
+                        .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+                }
+            }
+            controller.updateStickyHeaders(headersWithEnvironment)
+        }
+
         // Set callback for section changes
         controller.onSectionChanged = { [weak coordinator = context.coordinator] section in
             coordinator?.sectionChanged(section)
@@ -560,6 +582,17 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
                     .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
             )
             controller.setPinnedHeader(headerWithEnvironment)
+        }
+
+        // Update sticky headers
+        if !stickyHeaders.isEmpty {
+            let headersWithEnvironment = stickyHeaders.map { header in
+                StickyHeader(during: header.during) {
+                    header.content
+                        .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
+                }
+            }
+            controller.updateStickyHeaders(headersWithEnvironment)
         }
 
         // Handle programmatic section changes from binding

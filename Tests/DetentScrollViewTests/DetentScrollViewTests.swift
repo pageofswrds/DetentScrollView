@@ -186,6 +186,76 @@ final class DetentScrollViewTests: XCTestCase {
         XCTAssertEqual(header.during.lowerBound, 2)
         XCTAssertEqual(header.during.upperBound, 5)
     }
+
+    // MARK: - Sticky Header API Tests
+
+    func testViewWithStickyHeaders() {
+        let _ = DetentScrollContainer(
+            sectionHeights: [800, 600, 400],
+            stickyHeaders: [
+                StickyHeader(during: 0...0) {
+                    Text("Toolbar").frame(height: 44)
+                },
+                StickyHeader(during: 0...2) {
+                    Text("Navigation").frame(height: 56)
+                }
+            ]
+        ) {
+            VStack(spacing: 0) {
+                Color.blue.frame(height: 800)
+                Color.green.frame(height: 600)
+                Color.red.frame(height: 400)
+            }
+        }
+    }
+
+    func testViewWithStickyHeadersAndPinnedHeader() {
+        let _ = DetentScrollContainer(
+            sectionHeights: [800, 600],
+            stickyHeaders: [
+                StickyHeader(during: 0...0) {
+                    Text("Toolbar").frame(height: 44)
+                }
+            ]
+        ) {
+            VStack(spacing: 0) {
+                Color.blue.frame(height: 800)
+                Color.green.frame(height: 600)
+            }
+        } pinnedHeader: {
+            Text("Fixed Header").frame(height: 60)
+        }
+    }
+
+    func testViewWithoutStickyHeadersStillWorks() {
+        // Backward compatibility — no stickyHeaders parameter
+        let _ = DetentScrollContainer(sectionHeights: [800, 600]) {
+            VStack(spacing: 0) {
+                Color.blue.frame(height: 800)
+                Color.green.frame(height: 600)
+            }
+        }
+    }
+
+    func testDynamicHeightsWithStickyHeaders() {
+        let _ = DetentScrollContainer(
+            sectionCount: 2,
+            stickyHeaders: [
+                StickyHeader(during: 0...1) {
+                    Text("Always Visible").frame(height: 44)
+                }
+            ]
+        ) {
+            VStack(spacing: 0) {
+                DetentSection(index: 0) {
+                    Color.blue.frame(height: 800)
+                }
+                DetentSection(index: 1) {
+                    Color.green.frame(height: 600)
+                }
+            }
+        }
+    }
 }
 
 // Note: Physics tests have been moved to Mercurial package.
