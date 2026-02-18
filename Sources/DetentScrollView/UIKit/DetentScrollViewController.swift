@@ -582,6 +582,81 @@ public class DetentScrollViewController: UIViewController {
         view.setNeedsLayout()
     }
 
+    /// Computes the transition progress for a sticky header.
+    ///
+    /// - Returns: 0 = fully pinned, 1 = fully scrolled away.
+    private func stickyTransitionProgress(during: ClosedRange<Int>) -> CGFloat {
+        let exitSection = during.upperBound + 1
+        let threshold = configuration.threshold
+
+        if currentSection <= during.upperBound {
+            // In range — check if dragging toward exit
+            if currentSection == during.upperBound && rawDragOffset < 0 {
+                return min(1.0, -rawDragOffset / threshold)
+            }
+            return 0 // fully pinned
+        } else if currentSection == exitSection {
+            // Just past range — check if dragging back in
+            if rawDragOffset > 0 {
+                return max(0.0, 1.0 - rawDragOffset / threshold)
+            }
+            return 1 // fully gone
+        } else {
+            return 1 // far past range
+        }
+    }
+
+    /// Total height of all currently-pinned sticky headers.
+    /// Used by `maxInternalScroll` to reduce available viewport.
+    private var totalStickyPinnedHeight: CGFloat {
+        stickyEntries.reduce(0) { total, entry in
+            let progress = stickyTransitionProgress(during: entry.during)
+            return total + entry.measuredHeight * (1 - progress)
+        }
+    }
+
+    /// Positions all sticky header overlays based on current scroll state.
+    ///
+    /// Called from `updateContentOffset()` during drag and momentum,
+    /// and from the animation block in `animateToSection()`.
+    private func updateStickyPositions() {
+        guard !stickyEntries.isEmpty else { return }
+
+        var cumulativePinnedHeight: CGFloat = pinnedHeaderHeight
+
+        for i in stickyEntries.indices {
+            let entry = stickyEntries[i]
+            let progress = stickyTransitionProgress(during: entry.during)
+            let height = entry.measuredHeight
+
+            let overlayY: CGFloat
+            if progress <= 0 {
+                // Fully pinned — stacked below headers above
+                overlayY = cumulativePinnedHeight
+            } else if progress >= 1 {
+                // Fully gone — off-screen above
+                overlayY = -height
+            } else {
+                // Transitioning — interpolate between pinned and off-screen
+                let pinnedY = cumulativePinnedHeight
+                let goneY = -height
+                overlayY = pinnedY + (goneY - pinnedY) * progress
+            }
+
+            entry.container.frame = CGRect(
+                x: 0,
+                y: overlayY,
+                width: view.bounds.width,
+                height: height
+            )
+
+            // Accumulate height for stacking (partial presence during transition)
+            if progress < 1 {
+                cumulativePinnedHeight += height * (1 - progress)
+            }
+        }
+    }
+
     // MARK: - Section Geometry
 
     /// Pre-compute section offsets.
@@ -638,7 +713,7 @@ public class DetentScrollViewController: UIViewController {
     private func maxInternalScroll(for section: Int) -> CGFloat {
         guard section < sectionHeights.count else { return 0 }
         let inset = snapInset(for: section)
-        let availableHeight = view.bounds.height - pinnedHeaderHeight
+        let availableHeight = view.bounds.height - pinnedHeaderHeight - totalStickyPinnedHeight
         return max(0, sectionHeights[section] - availableHeight + inset)
     }
 
@@ -675,6 +750,7 @@ public class DetentScrollViewController: UIViewController {
     private func updateContentOffset() {
         // Use frame.origin instead of transform - UIHostingController doesn't respond well to transforms
         contentContainerView.frame.origin.y = visualOffset
+        updateStickyPositions()
     }
 }
 
