@@ -251,6 +251,16 @@ public class DetentScrollViewController: UIViewController {
     /// Current measured height of the pinned header.
     private(set) var pinnedHeaderHeight: CGFloat = 0
 
+    /// Tracks a single sticky header's UIKit state.
+    struct StickyEntry {
+        var during: ClosedRange<Int>
+        let container: UIView
+        let hostingController: UIHostingController<AnyView>
+        var measuredHeight: CGFloat = 0
+    }
+
+    /// Active sticky header entries, ordered by declaration (first = topmost when pinned).
+    private var stickyEntries: [StickyEntry] = []
 
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
@@ -369,6 +379,15 @@ public class DetentScrollViewController: UIViewController {
                 pinnedHeaderHeight = newHeight
                 onPinnedHeaderHeightChanged?(newHeight)
             }
+        }
+
+        // --- Sticky header layout (measurement only, positioning in updateStickyPositions) ---
+        for i in stickyEntries.indices {
+            let hc = stickyEntries[i].hostingController
+            let targetSize = CGSize(width: view.bounds.width, height: UIView.layoutFittingCompressedSize.height)
+            let fittingSize = hc.sizeThatFits(in: targetSize)
+            stickyEntries[i].measuredHeight = fittingSize.height
+            hc.view.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: fittingSize.height)
         }
 
         // Update content container size while preserving y position during drag
@@ -496,6 +515,68 @@ public class DetentScrollViewController: UIViewController {
         // Ensure pinned header is above content but below scroll bar
         if let scrollBar = scrollBarView {
             view.insertSubview(headerContainer, belowSubview: scrollBar)
+        }
+
+        view.setNeedsLayout()
+    }
+
+    /// Updates the sticky headers.
+    ///
+    /// If the number of headers matches existing entries, updates rootViews in place
+    /// (preserving @State). Otherwise, tears down and recreates all entries.
+    ///
+    /// - Parameter headers: The sticky header configurations. Order determines stacking
+    ///   (first = topmost when pinned).
+    public func updateStickyHeaders(_ headers: [StickyHeader]) {
+        loadViewIfNeeded()
+
+        // Match count: update in place (preserves @State in hosting controllers)
+        if headers.count == stickyEntries.count {
+            for i in headers.indices {
+                stickyEntries[i].during = headers[i].during
+                stickyEntries[i].hostingController.rootView = headers[i].content
+            }
+            view.setNeedsLayout()
+            return
+        }
+
+        // Count changed — teardown and rebuild
+        for entry in stickyEntries {
+            entry.hostingController.view.removeFromSuperview()
+            entry.hostingController.removeFromParent()
+            entry.container.removeFromSuperview()
+        }
+        stickyEntries = []
+
+        guard !headers.isEmpty else { return }
+
+        for header in headers {
+            let container = UIView()
+            container.backgroundColor = .clear
+            container.clipsToBounds = false
+
+            let hc = UIHostingController(rootView: header.content)
+            hc.view.backgroundColor = .clear
+            hc.view.translatesAutoresizingMaskIntoConstraints = true
+
+            addChild(hc)
+            container.addSubview(hc.view)
+            hc.didMove(toParent: self)
+
+            // Z-order: above content, below pinned header and scroll bar
+            if let pinnedHeader = pinnedHeaderView {
+                view.insertSubview(container, belowSubview: pinnedHeader)
+            } else if let scrollBar = scrollBarView {
+                view.insertSubview(container, belowSubview: scrollBar)
+            } else {
+                view.addSubview(container)
+            }
+
+            stickyEntries.append(StickyEntry(
+                during: header.during,
+                container: container,
+                hostingController: hc
+            ))
         }
 
         view.setNeedsLayout()
