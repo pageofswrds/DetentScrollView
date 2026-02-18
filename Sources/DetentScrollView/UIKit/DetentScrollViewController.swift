@@ -283,6 +283,9 @@ public class DetentScrollViewController: UIViewController {
     /// Active sticky header entries, ordered by declaration (first = topmost when pinned).
     private var stickyEntries: [StickyEntry] = []
 
+    /// Bottom inset for the scroll bar track (e.g., to clear a tab bar).
+    public var scrollBarBottomInset: CGFloat = 0
+
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
 
@@ -1815,7 +1818,11 @@ extension DetentScrollViewController {
         guard totalScrollableDistance > 0 else { return 8 }
         let progress = currentAbsoluteOffset / totalScrollableDistance
         let clampedProgress = max(0, min(1, progress))
-        let trackHeight = view.bounds.height - scrollBarHeight - 16
+        // Use window safe area as fallback when view safe area is zeroed
+        // (e.g., SwiftUI .ignoresSafeArea(edges: .bottom) zeros the view's insets)
+        let safeAreaBottom = max(view.safeAreaInsets.bottom, view.window?.safeAreaInsets.bottom ?? 0)
+        let bottomInset = scrollBarBottomInset + safeAreaBottom
+        let trackHeight = view.bounds.height - scrollBarHeight - 16 - bottomInset
         return 8 + (clampedProgress * trackHeight)
     }
 
