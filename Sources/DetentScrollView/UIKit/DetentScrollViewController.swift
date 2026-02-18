@@ -244,6 +244,11 @@ public class DetentScrollViewController: UIViewController {
     /// Allows consumers to adjust section sizing to account for the pinned header.
     public var onPinnedHeaderHeightChanged: ((CGFloat) -> Void)?
 
+    /// Called when the total header height changes (pinned header + all sticky headers).
+    /// Reports the combined measured height regardless of current pinning state,
+    /// so consumers can size section content to account for header overlay space.
+    public var onHeaderHeightChanged: ((CGFloat) -> Void)?
+
     // MARK: - Views
 
     /// Container view that gets transformed for scrolling.
@@ -415,6 +420,10 @@ public class DetentScrollViewController: UIViewController {
             stickyEntries[i].measuredHeight = fittingSize.height
             hc.view.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: fittingSize.height)
         }
+
+        // Report total header height (pinned + all sticky measured heights)
+        let totalStickyMeasuredHeight = stickyEntries.reduce(CGFloat(0)) { $0 + $1.measuredHeight }
+        onHeaderHeightChanged?(pinnedHeaderHeight + totalStickyMeasuredHeight)
 
         // Update content container size while preserving y position during drag
         let newWidth = view.bounds.width
@@ -730,6 +739,13 @@ public class DetentScrollViewController: UIViewController {
         return sectionSnapInsets[section]
     }
 
+    /// Combined vertical offset for content positioning.
+    /// Includes pinned header height plus smooth sticky header heights.
+    /// Used everywhere content needs to be pushed below headers.
+    private var headerOffset: CGFloat {
+        pinnedHeaderHeight + totalStickyPinnedHeight
+    }
+
     /// Maximum internal scroll for current section.
     private var maxInternalScroll: CGFloat {
         maxInternalScroll(for: currentSection)
@@ -739,7 +755,7 @@ public class DetentScrollViewController: UIViewController {
     private func maxInternalScroll(for section: Int) -> CGFloat {
         guard section < sectionHeights.count else { return 0 }
         let inset = snapInset(for: section)
-        let availableHeight = view.bounds.height - pinnedHeaderHeight - totalStickyPinnedHeight
+        let availableHeight = view.bounds.height - headerOffset
         return max(0, sectionHeights[section] - availableHeight + inset)
     }
 
@@ -767,7 +783,7 @@ public class DetentScrollViewController: UIViewController {
     /// The visual offset applied to content.
     private var visualOffset: CGFloat {
         let baseOffset = -currentSectionOffset + currentSnapInset - internalOffset
-        return pinnedHeaderHeight + baseOffset + dragOffset
+        return headerOffset + baseOffset + dragOffset
     }
 
     // MARK: - Offset Updates
@@ -852,13 +868,13 @@ extension DetentScrollViewController {
             currentSection = endState.section
 
             // Calculate internalOffset from actual frame position.
-            // Subtract pinnedHeaderHeight because it's a constant additive term in visualOffset —
+            // Subtract headerOffset because it's a constant additive term in visualOffset —
             // including it in actualFrameY would shift internalOffset by that amount.
             // Allow out-of-bounds values - see internalOffset documentation for the contract.
             // The momentum system's spring physics will settle this to valid bounds.
             let targetSectionOffset = sectionOffsets[currentSection]
             let targetSnapInset = snapInset(for: currentSection)
-            internalOffset = -targetSectionOffset + targetSnapInset + pinnedHeaderHeight - actualFrameY
+            internalOffset = -targetSectionOffset + targetSnapInset + headerOffset - actualFrameY
 
             rawDragOffset = 0
 
@@ -1126,9 +1142,9 @@ extension DetentScrollViewController {
     /// internalOffset that maintains the same visual position. This prevents any visible jump.
     private func breakThroughToNextSection(overflow: CGFloat) {
         // Capture scroll position BEFORE changing any state.
-        // Subtract pinnedHeaderHeight because it's a constant additive term in visualOffset —
+        // Subtract headerOffset because it's a constant additive term in visualOffset —
         // including it here would double-count it when visualOffset is recomputed.
-        let currentScroll = visualOffset - pinnedHeaderHeight
+        let currentScroll = visualOffset - headerOffset
 
         // Haptic feedback for crossing the detent
         let impact = UIImpactFeedbackGenerator(style: .medium)
@@ -1155,7 +1171,7 @@ extension DetentScrollViewController {
     /// Seamlessly crosses to the next section with no barrier or haptic.
     /// Used by `.free` crossing mode.
     private func crossToNextSection() {
-        let currentScroll = visualOffset - pinnedHeaderHeight
+        let currentScroll = visualOffset - headerOffset
 
         currentSection += 1
         rawDragOffset = 0
@@ -1168,7 +1184,7 @@ extension DetentScrollViewController {
     /// Seamlessly crosses to the previous section with no barrier or haptic.
     /// Used by `.free` crossing mode.
     private func crossToPreviousSection() {
-        let currentScroll = visualOffset - pinnedHeaderHeight
+        let currentScroll = visualOffset - headerOffset
 
         currentSection -= 1
         rawDragOffset = 0
@@ -1183,7 +1199,7 @@ extension DetentScrollViewController {
     /// Called when the user drags past the threshold while still dragging (not on release).
     private func breakThroughToPreviousSection(overflow: CGFloat) {
         // Capture scroll position BEFORE changing any state (see breakThroughToNextSection).
-        let currentScroll = visualOffset - pinnedHeaderHeight
+        let currentScroll = visualOffset - headerOffset
 
         // Haptic feedback for crossing the detent
         let impact = UIImpactFeedbackGenerator(style: .medium)
@@ -1509,11 +1525,11 @@ extension DetentScrollViewController {
                 currentSection = endState.section
 
                 // Calculate internalOffset from actual frame position.
-                // Subtract pinnedHeaderHeight (constant term in visualOffset) to avoid double-counting.
+                // Subtract headerOffset (constant term in visualOffset) to avoid double-counting.
                 // Allow out-of-bounds values - see internalOffset documentation for the contract.
                 let targetSectionOffset = sectionOffsets[currentSection]
                 let targetSnapInset = snapInset(for: currentSection)
-                internalOffset = -targetSectionOffset + targetSnapInset + pinnedHeaderHeight - actualFrameY
+                internalOffset = -targetSectionOffset + targetSnapInset + headerOffset - actualFrameY
 
                 rawDragOffset = 0
                 contentContainerView.frame.origin.y = actualFrameY
