@@ -11,6 +11,16 @@ import SwiftUI
 import QuartzCore
 import Mercurial
 
+/// A UIView that passes through touches not landing on any subview.
+/// Used for the sticky header clip container so it clips visually
+/// but does not swallow taps meant for content underneath.
+private final class PassThroughView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        return result === self ? nil : result
+    }
+}
+
 /// Core UIKit implementation of detent scrolling.
 ///
 /// This view controller hosts SwiftUI content via UIHostingController and handles
@@ -251,6 +261,12 @@ public class DetentScrollViewController: UIViewController {
     /// Current measured height of the pinned header.
     private(set) var pinnedHeaderHeight: CGFloat = 0
 
+    /// Clipping container for sticky header overlays.
+    /// Clips to bounds so headers sliding off-screen above don't render
+    /// outside the controller's viewport (the controller's view has
+    /// clipsToBounds = false to allow marking menu overlays from pinnedHeader).
+    private var stickyClipView: UIView!
+
     /// Tracks a single sticky header's UIKit state.
     struct StickyEntry {
         var during: ClosedRange<Int>
@@ -333,6 +349,13 @@ public class DetentScrollViewController: UIViewController {
         contentContainerView.backgroundColor = .clear
         view.addSubview(contentContainerView)
 
+        // Sticky header clip container — clips headers that slide off-screen above.
+        // Uses PassThroughView so taps on content underneath are not swallowed.
+        stickyClipView = PassThroughView()
+        stickyClipView.backgroundColor = .clear
+        stickyClipView.clipsToBounds = true
+        view.addSubview(stickyClipView)
+
         // Scroll bar
         scrollBarView = UIView()
         scrollBarView.backgroundColor = UIColor.label.withAlphaComponent(0.4)
@@ -380,6 +403,9 @@ public class DetentScrollViewController: UIViewController {
                 onPinnedHeaderHeightChanged?(newHeight)
             }
         }
+
+        // --- Sticky clip view fills the controller's bounds ---
+        stickyClipView.frame = view.bounds
 
         // --- Sticky header layout (measurement only, positioning in updateStickyPositions) ---
         for i in stickyEntries.indices {
@@ -542,6 +568,7 @@ public class DetentScrollViewController: UIViewController {
 
         // Count changed — teardown and rebuild
         for entry in stickyEntries {
+            entry.hostingController.willMove(toParent: nil)
             entry.hostingController.view.removeFromSuperview()
             entry.hostingController.removeFromParent()
             entry.container.removeFromSuperview()
@@ -563,14 +590,8 @@ public class DetentScrollViewController: UIViewController {
             container.addSubview(hc.view)
             hc.didMove(toParent: self)
 
-            // Z-order: above content, below pinned header and scroll bar
-            if let pinnedHeader = pinnedHeaderView {
-                view.insertSubview(container, belowSubview: pinnedHeader)
-            } else if let scrollBar = scrollBarView {
-                view.insertSubview(container, belowSubview: scrollBar)
-            } else {
-                view.addSubview(container)
-            }
+            // Add to the clipping container (clips headers that slide above viewport)
+            stickyClipView.addSubview(container)
 
             stickyEntries.append(StickyEntry(
                 during: header.during,
@@ -586,6 +607,11 @@ public class DetentScrollViewController: UIViewController {
     ///
     /// - Returns: 0 = fully pinned, 1 = fully scrolled away.
     private func stickyTransitionProgress(during: ClosedRange<Int>) -> CGFloat {
+        // Before range — header not yet visible
+        if currentSection < during.lowerBound {
+            return 1
+        }
+
         let exitSection = during.upperBound + 1
         let threshold = configuration.threshold
 

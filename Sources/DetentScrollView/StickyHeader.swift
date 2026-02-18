@@ -43,6 +43,7 @@ public struct StickyHeader {
         during: ClosedRange<Int>,
         @ViewBuilder content: () -> Content
     ) {
+        precondition(during.lowerBound >= 0, "StickyHeader 'during' range must start at 0 or greater")
         self.during = during
         self.content = AnyView(content())
     }

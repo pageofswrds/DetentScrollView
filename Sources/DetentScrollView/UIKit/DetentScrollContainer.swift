@@ -496,15 +496,13 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         }
 
         // Set up sticky headers
-        if !stickyHeaders.isEmpty {
-            let headersWithEnvironment = stickyHeaders.map { header in
-                StickyHeader(during: header.during) {
-                    header.content
-                        .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
-                }
+        let headersWithEnvironment = stickyHeaders.map { header in
+            StickyHeader(during: header.during) {
+                header.content
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
             }
-            controller.updateStickyHeaders(headersWithEnvironment)
         }
+        controller.updateStickyHeaders(headersWithEnvironment)
 
         // Set callback for section changes
         controller.onSectionChanged = { [weak coordinator = context.coordinator] section in
@@ -585,15 +583,13 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         }
 
         // Update sticky headers
-        if !stickyHeaders.isEmpty {
-            let headersWithEnvironment = stickyHeaders.map { header in
-                StickyHeader(during: header.during) {
-                    header.content
-                        .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
-                }
+        let headersWithEnvironment = stickyHeaders.map { header in
+            StickyHeader(during: header.during) {
+                header.content
+                    .environment(\.detentScrollDragHandler, context.coordinator.dragHandler)
             }
-            controller.updateStickyHeaders(headersWithEnvironment)
         }
+        controller.updateStickyHeaders(headersWithEnvironment)
 
         // Handle programmatic section changes from binding
         // Don't trigger during animations to avoid feedback loops with rapid swiping
