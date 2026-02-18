@@ -168,6 +168,24 @@ final class DetentScrollViewTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - StickyHeader Tests
+
+    func testStickyHeaderInstantiation() {
+        let header = StickyHeader(during: 0...0) {
+            Text("Toolbar")
+                .frame(height: 44)
+        }
+        XCTAssertEqual(header.during, 0...0)
+    }
+
+    func testStickyHeaderDuringRange() {
+        let header = StickyHeader(during: 2...5) {
+            Text("Section Header")
+        }
+        XCTAssertEqual(header.during.lowerBound, 2)
+        XCTAssertEqual(header.during.upperBound, 5)
+    }
 }
 
 // Note: Physics tests have been moved to Mercurial package.
