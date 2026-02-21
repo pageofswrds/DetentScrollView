@@ -813,6 +813,10 @@ extension DetentScrollViewController {
         if displayLink != nil {
             stopMomentum()
             showScrollBar()
+            // Schedule fallback hide in case no vertical drag follows (e.g., horizontal swipe).
+            // If a drag does begin, handleDragBegan will call showScrollBar() again,
+            // cancelling this hide, and handleDragEnded will schedule its own.
+            scheduleScrollBarHide()
         }
     }
 
