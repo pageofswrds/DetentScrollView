@@ -628,8 +628,9 @@ public class DetentScrollViewController: UIViewController {
         let threshold = configuration.threshold
 
         if currentSection <= during.upperBound {
-            // In range — check if dragging toward exit
-            if currentSection == during.upperBound && rawDragOffset < 0 {
+            // In range — check if dragging toward exit (only if a next section exists)
+            if currentSection == during.upperBound && rawDragOffset < 0
+                && currentSection < sectionHeights.count - 1 {
                 return min(1.0, -rawDragOffset / threshold)
             }
             return 0 // fully pinned
@@ -1785,7 +1786,9 @@ extension DetentScrollViewController {
 extension DetentScrollViewController {
 
     private var totalScrollableDistance: CGFloat {
-        max(0, totalContentHeight - view.bounds.height)
+        // Account for headers reducing the viewport — without this,
+        // progress exceeds 1.0 and the scroll bar goes off the bottom.
+        max(0, totalContentHeight - view.bounds.height + headerOffset)
     }
 
     private var currentAbsoluteOffset: CGFloat {
@@ -1793,14 +1796,30 @@ extension DetentScrollViewController {
         currentSectionOffset - currentSnapInset + internalOffset
     }
 
+    /// Top inset for the scroll bar track: below pinned headers and the first
+    /// sticky header (e.g., toolbar), so the scroll bar can overlap with
+    /// subsequent sticky headers (e.g., an active charts row).
+    private var scrollBarTopInset: CGFloat {
+        var inset = pinnedHeaderHeight
+        if let first = stickyEntries.first {
+            let progress = stickyTransitionProgress(during: first.during)
+            inset += first.measuredHeight * (1 - progress)
+        }
+        return inset
+    }
+
     private var scrollBarHeight: CGFloat {
         guard totalScrollableDistance > 0 else { return 0 }
-        let contentRatio = view.bounds.height / totalContentHeight
-        let baseHeight = max(40, view.bounds.height * contentRatio)
+        let viewportHeight = view.bounds.height - headerOffset
+        let contentRatio = viewportHeight / totalContentHeight
+        let baseHeight = max(40, viewportHeight * contentRatio)
 
-        // Shrink when overscrolling
+        // Shrink when overscrolling, but skip during breakthrough transitions
+        // where out-of-bounds internalOffset is a bookkeeping artifact.
         let overscrollAmount: CGFloat
-        if internalOffset < 0 {
+        if didBreakThrough {
+            overscrollAmount = 0
+        } else if internalOffset < 0 {
             overscrollAmount = abs(internalOffset)
         } else if internalOffset > maxInternalScroll {
             overscrollAmount = internalOffset - maxInternalScroll
@@ -1815,15 +1834,16 @@ extension DetentScrollViewController {
     }
 
     private var scrollBarOffsetY: CGFloat {
-        guard totalScrollableDistance > 0 else { return 8 }
+        let topInset = scrollBarTopInset
+        guard totalScrollableDistance > 0 else { return topInset + 8 }
         let progress = currentAbsoluteOffset / totalScrollableDistance
         let clampedProgress = max(0, min(1, progress))
         // Use window safe area as fallback when view safe area is zeroed
         // (e.g., SwiftUI .ignoresSafeArea(edges: .bottom) zeros the view's insets)
         let safeAreaBottom = max(view.safeAreaInsets.bottom, view.window?.safeAreaInsets.bottom ?? 0)
-        let bottomInset = scrollBarBottomInset + safeAreaBottom
-        let trackHeight = view.bounds.height - scrollBarHeight - 16 - bottomInset
-        return 8 + (clampedProgress * trackHeight)
+        let bottomInset = scrollBarBottomInset + safeAreaBottom + 8
+        let trackHeight = view.bounds.height - scrollBarHeight - 16 - topInset - bottomInset
+        return topInset + 8 + (clampedProgress * trackHeight)
     }
 
     private func updateScrollBarFrame() {
