@@ -286,6 +286,15 @@ public class DetentScrollViewController: UIViewController {
     /// Bottom inset for the scroll bar track (e.g., to clear a tab bar).
     public var scrollBarBottomInset: CGFloat = 0
 
+    /// Whether the scroll bar is hidden. When `true`, the scroll bar is never shown.
+    public var isScrollBarHidden: Bool = false {
+        didSet {
+            if isScrollBarHidden, scrollBarView != nil {
+                hideScrollBarImmediately()
+            }
+        }
+    }
+
     /// Scroll bar indicator view.
     private var scrollBarView: UIView!
 
@@ -1862,6 +1871,8 @@ extension DetentScrollViewController {
     /// Shows the scroll bar immediately.
     /// Cancels any pending hide and transitions to `visible` state.
     private func showScrollBar() {
+        guard !isScrollBarHidden else { return }
+
         // Cancel any pending hide task
         if case .hiding(let task) = scrollBarState {
             task.cancel()

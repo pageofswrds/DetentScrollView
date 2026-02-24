@@ -173,6 +173,9 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
     /// Bottom inset for the scroll bar track (e.g., to clear a tab bar).
     public let scrollBarBottomInset: CGFloat
 
+    /// Whether the scroll bar indicator is hidden.
+    public let isScrollBarHidden: Bool
+
     // MARK: - Initializers
 
     /// Creates a detent scroll container with fixed section heights.
@@ -196,6 +199,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         headerHeight: Binding<CGFloat>? = nil,
         stickyHeaders: [StickyHeader] = [],
         scrollBarBottomInset: CGFloat = 0,
+        isScrollBarHidden: Bool = false,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
     ) where PinnedHeader == EmptyView {
@@ -204,6 +208,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         self.pinnedHeader = nil
         self.stickyHeaders = stickyHeaders
         self.scrollBarBottomInset = scrollBarBottomInset
+        self.isScrollBarHidden = isScrollBarHidden
 
         // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
@@ -280,6 +285,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         headerHeight: Binding<CGFloat>? = nil,
         stickyHeaders: [StickyHeader] = [],
         scrollBarBottomInset: CGFloat = 0,
+        isScrollBarHidden: Bool = false,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content
     ) where PinnedHeader == EmptyView {
@@ -288,6 +294,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         self.pinnedHeader = nil
         self.stickyHeaders = stickyHeaders
         self.scrollBarBottomInset = scrollBarBottomInset
+        self.isScrollBarHidden = isScrollBarHidden
 
         // Ensure snap insets array matches section count
         let insets = sectionSnapInsets ?? []
@@ -352,6 +359,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         headerHeight: Binding<CGFloat>? = nil,
         stickyHeaders: [StickyHeader] = [],
         scrollBarBottomInset: CGFloat = 0,
+        isScrollBarHidden: Bool = false,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder pinnedHeader: () -> PinnedHeader
@@ -361,6 +369,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         self.pinnedHeader = pinnedHeader()
         self.stickyHeaders = stickyHeaders
         self.scrollBarBottomInset = scrollBarBottomInset
+        self.isScrollBarHidden = isScrollBarHidden
 
         let insets = sectionSnapInsets ?? []
         if insets.count < sectionHeights.count {
@@ -430,6 +439,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         headerHeight: Binding<CGFloat>? = nil,
         stickyHeaders: [StickyHeader] = [],
         scrollBarBottomInset: CGFloat = 0,
+        isScrollBarHidden: Bool = false,
         isScrollDisabled: Bool = false,
         @ViewBuilder content: () -> Content,
         @ViewBuilder pinnedHeader: () -> PinnedHeader
@@ -439,6 +449,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         self.pinnedHeader = pinnedHeader()
         self.stickyHeaders = stickyHeaders
         self.scrollBarBottomInset = scrollBarBottomInset
+        self.isScrollBarHidden = isScrollBarHidden
 
         let insets = sectionSnapInsets ?? []
         if insets.count < sectionCount {
@@ -510,6 +521,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         controller.sectionSnapInsets = sectionSnapInsets
         controller.configuration = configuration
         controller.scrollBarBottomInset = scrollBarBottomInset
+        controller.isScrollBarHidden = isScrollBarHidden
         controller.isScrollDisabled = isScrollDisabled
 
         // Wire up drag handler to controller
@@ -587,6 +599,7 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         controller.sectionSnapInsets = sectionSnapInsets
         controller.configuration = configuration
         controller.scrollBarBottomInset = scrollBarBottomInset
+        controller.isScrollBarHidden = isScrollBarHidden
         controller.isScrollDisabled = isScrollDisabled
 
         // Ensure drag handler has current controller reference
