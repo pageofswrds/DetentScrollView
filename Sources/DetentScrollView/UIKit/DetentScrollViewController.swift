@@ -343,6 +343,17 @@ public class DetentScrollViewController: UIViewController {
 
         setupViews()
         setupGestures()
+
+        // Observe app lifecycle to settle state on background/foreground transitions.
+        // viewWillDisappear is NOT called when the app backgrounds — the VC stays in
+        // the hierarchy — so display links, gesture state, and animation state survive
+        // the transition and become stale.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
     }
 
     public override func viewWillDisappear(_ animated: Bool) {
@@ -351,6 +362,44 @@ public class DetentScrollViewController: UIViewController {
         // Clean up all animation state when view disappears (e.g., switching tabs)
         hideScrollBarImmediately()
         stopAllAnimations()
+    }
+
+    // MARK: - App Lifecycle
+
+    /// Settle all scroll state when the app backgrounds.
+    ///
+    /// Without this, display links freeze with stale physics state (momentum velocity,
+    /// snap-back velocity), gesture flags (`isDragging`, `isExternalDragActive`) persist
+    /// with no active touch, and `rawDragOffset` leaves the view visually displaced.
+    /// On foreground return, the stale state causes scroll glitches, stuck gestures,
+    /// and corrupted navigation.
+    @objc private func appWillResignActive() {
+        // 1. Stop all animations (display links, property animators)
+        stopAllAnimations()
+        hideScrollBarImmediately()
+
+        // 2. Reset gesture tracking state
+        isDragging = false
+        lastPanTranslation = 0
+        isExternalDragActive = false
+        lastExternalTranslation = 0
+
+        // 3. Settle rawDragOffset to zero (snap to nearest clean position)
+        rawDragOffset = 0
+
+        // 4. Clamp internalOffset to valid range
+        if internalOffset < 0 {
+            internalOffset = 0
+        } else if internalOffset > maxInternalScroll {
+            internalOffset = maxInternalScroll
+        }
+
+        // 5. Update visual position to match settled state
+        updateContentOffset()
+
+        // 6. Report final scroll progress to SwiftUI bindings
+        let settledProgress: CGFloat = currentSection > 0 ? 1.0 : 0.0
+        onScrollProgress?(settledProgress)
     }
 
     // MARK: - Setup
