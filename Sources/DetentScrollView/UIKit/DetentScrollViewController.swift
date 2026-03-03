@@ -289,6 +289,7 @@ public class DetentScrollViewController: UIViewController {
     /// Whether the scroll bar is hidden. When `true`, the scroll bar is never shown.
     public var isScrollBarHidden: Bool = false {
         didSet {
+            guard isScrollBarHidden != oldValue else { return }
             if isScrollBarHidden, scrollBarView != nil {
                 hideScrollBarImmediately()
             }
@@ -1412,6 +1413,7 @@ extension DetentScrollViewController {
             rawDragOffset = 0
             updateContentOffset()
             onSectionChanged?(clampedSection)
+            onScrollProgress?(clampedSection > 0 ? 1.0 : 0.0)
         }
     }
 

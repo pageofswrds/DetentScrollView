@@ -668,7 +668,15 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         // Handle programmatic section changes from binding
         // Don't trigger during animations to avoid feedback loops with rapid swiping
         if usesExternalBinding && controller.currentSection != currentSection && !controller.isAnimating {
-            controller.scrollToSection(currentSection, animated: true)
+            if context.coordinator.initialSectionApplied {
+                // Normal programmatic section change — animate
+                controller.scrollToSection(currentSection, animated: true)
+            } else if stickyHeaders.isEmpty || context.coordinator.hasReceivedHeaderHeight {
+                // Initial section with correct layout — apply without animation
+                controller.scrollToSection(currentSection, animated: false)
+                context.coordinator.initialSectionApplied = true
+            }
+            // else: snap insets not ready yet (headers not measured), skip until next update
         }
     }
 
@@ -679,6 +687,12 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         let dragHandler = DetentScrollDragHandler()
         var heightCoordinator: SectionHeightCoordinator?
         weak var controller: DetentScrollViewController?
+
+        /// Whether sticky headers have been measured (snap insets depend on header height).
+        var hasReceivedHeaderHeight = false
+
+        /// Whether the initial section from the binding has been applied to the controller.
+        var initialSectionApplied = false
 
         init(_ parent: DetentScrollContainer) {
             self.parent = parent
@@ -710,6 +724,13 @@ public struct DetentScrollContainer<Content: View, PinnedHeader: View>: UIViewCo
         func headerHeightChanged(_ height: CGFloat) {
             if parent.usesHeaderHeightBinding, height > parent.headerHeight {
                 parent.headerHeight = height
+            }
+            hasReceivedHeaderHeight = true
+
+            // If binding matches controller's default (0), sections already agree —
+            // mark as applied so future programmatic changes animate normally.
+            if parent.currentSection == 0 {
+                initialSectionApplied = true
             }
         }
     }
